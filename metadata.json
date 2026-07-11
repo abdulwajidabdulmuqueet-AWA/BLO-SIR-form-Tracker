@@ -1,0 +1,6 @@
+{
+  "name": "BLO SIR Form Tracker",
+  "description": "Bilingual (Marathi/English) Booth Level Officer dashboard for tracking Maharashtra SIR forms distribution, collection, relative form management, and AI-powered Voter List OCR parsing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
