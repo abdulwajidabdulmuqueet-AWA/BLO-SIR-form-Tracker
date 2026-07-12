@@ -1,0 +1,21 @@
+{
+  "short_name": "BLO Tracker",
+  "name": "BLO Officer Smart Form Tracker",
+  "icons": [
+    {
+      "src": "https://img.icons8.com/color/192/000000/ballot-box.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://img.icons8.com/color/512/000000/ballot-box.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ea580c",
+  "theme_color": "#ea580c",
+  "display": "standalone",
+  "orientation": "portrait"
+}

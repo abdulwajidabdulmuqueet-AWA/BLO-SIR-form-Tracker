@@ -109,8 +109,21 @@ const defaultForms: FormRecord[] = [
 ];
 
 export default function App() {
-  // Lang Toggle: 'mr' (Marathi) or 'en' (English)
-  const [lang, setLang] = useState<'mr' | 'en'>('mr');
+  // Lang Toggle: 'mr' (Marathi) or 'en' (English) - default to English 'en'
+  const [lang, setLangState] = useState<'mr' | 'en'>(() => {
+    const saved = localStorage.getItem('blo_lang');
+    return (saved === 'mr' || saved === 'en') ? saved : 'en';
+  });
+
+  const setLang = (newLang: 'mr' | 'en') => {
+    setLangState(newLang);
+    localStorage.setItem('blo_lang', newLang);
+  };
+
+  // References for swift/easy cursor focus transitions
+  const recipientNameRef = useRef<HTMLInputElement>(null);
+  const recipientMobileRef = useRef<HTMLInputElement>(null);
+  const tempFormNumberRef = useRef<HTMLInputElement>(null);
 
   // App Tabs
   const [activeTab, setActiveTab] = useState<'dashboard' | 'distribution' | 'collection' | 'voters' | 'reports'>('dashboard');
@@ -182,6 +195,10 @@ export default function App() {
   const [backupParsedData, setBackupParsedData] = useState<any | null>(null);
   const [restoreMode, setRestoreMode] = useState<'merge' | 'overwrite'>('merge');
 
+  // PWA & App Install states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+
   // Notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -203,6 +220,30 @@ export default function App() {
       setForms(defaultForms);
       localStorage.setItem('blo_forms', JSON.stringify(defaultForms));
     }
+  }, []);
+
+  // Easy Entry Auto-focus transition
+  useEffect(() => {
+    if (activeTab === 'distribution' && distributionInputMode === 'manual') {
+      const timer = setTimeout(() => {
+        recipientNameRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, distributionInputMode]);
+
+  // Capture PWA install prompt event
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
   }, []);
 
   // Save Data Helpers
@@ -1269,6 +1310,27 @@ export default function App() {
     }
   };
 
+  // Handle PWA App installation click
+  const handleInstallClick = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: { outcome: string }) => {
+        if (choiceResult.outcome === 'accepted') {
+          showToast(
+            lang === 'mr' 
+              ? "अँप इंस्टॉलेशन सुरू झाले!" 
+              : "App installation started successfully!", 
+            'success'
+          );
+        }
+        setDeferredPrompt(null);
+      });
+    } else {
+      // Show full installation instruction sheet/modal
+      setShowInstallInstructions(true);
+    }
+  };
+
   // Handle Backup File selection and parsing
   const handleBackupFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1438,6 +1500,16 @@ export default function App() {
             >
               <Languages className="w-4 h-4 text-amber-200" />
               <span>{lang === 'mr' ? 'English' : 'मराठी'}</span>
+            </button>
+
+            {/* PWA App Install Button */}
+            <button 
+              id="pwa-install-header-btn"
+              onClick={handleInstallClick}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500/50 px-3.5 py-2 rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all text-white cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-emerald-200" />
+              <span>{lang === 'mr' ? 'Install App' : 'अँप इंस्टॉल'}</span>
             </button>
 
             {/* AI OCR Trigger */}
@@ -1831,11 +1903,18 @@ export default function App() {
                         {t.recipientNameLabel[lang]} <span className="text-red-500">*</span>
                       </label>
                       <input 
+                        ref={recipientNameRef}
                         type="text" 
                         value={recipientName}
                         onChange={(e) => {
                           setRecipientName(e.target.value);
                           if (selectedVoterSrNo) setSelectedVoterSrNo('');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            recipientMobileRef.current?.focus();
+                          }
                         }}
                         placeholder={lang === 'mr' ? "उदा. सचिन सुखदेव पाटील" : "e.g. Sachin Sukhdev Patil"}
                         className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all font-semibold"
@@ -1880,10 +1959,17 @@ export default function App() {
                         {t.recipientMobileLabel[lang]} <span className="text-red-500">*</span>
                       </label>
                       <input 
+                        ref={recipientMobileRef}
                         type="tel" 
                         maxLength={10}
                         value={recipientMobile}
                         onChange={(e) => setRecipientMobile(e.target.value.replace(/\D/g, ''))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            tempFormNumberRef.current?.focus();
+                          }
+                        }}
                         placeholder="e.g. 98XXXXXXXX"
                         className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all font-mono font-bold"
                         required
@@ -1934,6 +2020,7 @@ export default function App() {
                       <div className="flex gap-2">
                         <div className="relative flex-grow">
                           <input 
+                            ref={tempFormNumberRef}
                             type="text" 
                             inputMode="numeric"
                             pattern="[0-9]*"
@@ -3607,6 +3694,90 @@ export default function App() {
                     ? (lang === 'mr' ? "पूर्ण ओव्हरराईट लागू करा" : "Confirm Full Overwrite") 
                     : (lang === 'mr' ? "मर्ज डेटा लागू करा" : "Apply Merge Restore")}
                 </span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: APP INSTALLATION INSTRUCTIONS */}
+      {showInstallInstructions && (
+        <div id="pwa-install-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col animate-in fade-in duration-250">
+            
+            <div className="bg-gradient-to-r from-emerald-700 to-emerald-800 text-white p-5 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Download className="w-5 h-5 text-emerald-300" />
+                <h3 className="font-extrabold text-base md:text-lg">
+                  {lang === 'mr' ? "अँप्लिकेशन मोबाईलवर इंस्टॉल करा" : "Install BLO App on Mobile"}
+                </h3>
+              </div>
+              <button 
+                onClick={() => setShowInstallInstructions(false)}
+                className="text-slate-200 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-5 max-h-[80vh] text-slate-700">
+              <p className="text-xs text-slate-600 leading-relaxed bg-emerald-50 p-4 rounded-xl border border-emerald-100 font-medium">
+                {lang === 'mr' 
+                  ? "हे ॲप तुम्ही कोणत्याही अतिरिक्त डाऊनलोडशिवाय थेट तुमच्या मोबाईलच्या होम स्क्रीनवर इंस्टॉल करू शकता. इंटरनेट नसले तरीही हे ॲप कार्य करते." 
+                  : "You can install this app directly on your mobile home screen or computer without any app store. It works offline and runs instantly."}
+              </p>
+
+              <div className="space-y-4">
+                {/* iPhone / Safari */}
+                <div className="p-4 border border-slate-100 rounded-xl bg-slate-50 space-y-2">
+                  <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                    <span className="p-1 bg-amber-100 text-amber-800 rounded-lg text-xs font-black">1</span>
+                    📱 {lang === 'mr' ? "आयफोन / सफारी (iPhone / iOS Safari)" : "iPhone & iPad (Safari)"}
+                  </h4>
+                  <ul className="list-disc list-inside text-xs text-slate-600 space-y-1.5 pl-2">
+                    <li>{lang === 'mr' ? "सफारी ब्राउझरमध्ये ही लिंक उघडा." : "Open this URL in Safari browser."}</li>
+                    <li>{lang === 'mr' ? "खालील 'Share' (शेअर) 📤 बटणावर क्लिक करा." : "Tap the Share button 📤 in the toolbar."}</li>
+                    <li>{lang === 'mr' ? "खाली स्क्रोल करून 'Add to Home Screen' (होम स्क्रीनवर जोडा) ➕ निवडा." : "Scroll down and tap 'Add to Home Screen' ➕."}</li>
+                    <li>{lang === 'mr' ? "वरती 'Add' (जोडा) वर क्लिक करा." : "Tap 'Add' in the top right corner."}</li>
+                  </ul>
+                </div>
+
+                {/* Android / Chrome */}
+                <div className="p-4 border border-slate-100 rounded-xl bg-slate-50 space-y-2">
+                  <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                    <span className="p-1 bg-blue-100 text-blue-800 rounded-lg text-xs font-black">2</span>
+                    🤖 {lang === 'mr' ? "अँड्रॉइड / क्रोम (Android / Chrome)" : "Android Phones (Chrome)"}
+                  </h4>
+                  <ul className="list-disc list-inside text-xs text-slate-600 space-y-1.5 pl-2">
+                    <li>{lang === 'mr' ? "क्रोम ब्राउझरच्या कोपऱ्यातील तीन ठिपक्यांवर (⋮) टॅप करा." : "Tap the three-dots menu (⋮) in Chrome."}</li>
+                    <li>{lang === 'mr' ? "'Install app' (अँप इंस्टॉल करा) किंवा 'Add to Home screen' निवडा." : "Select 'Install app' or 'Add to Home Screen'."}</li>
+                    <li>{lang === 'mr' ? "दिलेल्या पॉप-अप मध्ये 'Install' वर क्लिक करा." : "Confirm by clicking 'Install'."}</li>
+                  </ul>
+                </div>
+
+                {/* Desktop */}
+                <div className="p-4 border border-slate-100 rounded-xl bg-slate-50 space-y-2">
+                  <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                    <span className="p-1 bg-purple-100 text-purple-800 rounded-lg text-xs font-black">3</span>
+                    💻 {lang === 'mr' ? "संगणक / लॅपटॉप (Desktop Chrome / Edge)" : "Computers (Chrome/Edge)"}
+                  </h4>
+                  <ul className="list-disc list-inside text-xs text-slate-600 space-y-1.5 pl-2">
+                    <li>{lang === 'mr' ? "ब्राउझरच्या ॲड्रेस बारच्या उजव्या बाजूला असलेल्या डाऊनलोड आयकॉनवर क्लिक करा." : "Click the Install Icon (computer with arrow down) in the address bar."}</li>
+                    <li>{lang === 'mr' ? "किंवा सेटिंग्ज मेनू मधून 'Install BLO Officer Tracker' निवडा." : "Or click the browser menu (⋮) and choose 'Save and share' -> 'Install app'."}</li>
+                  </ul>
+                </div>
+              </div>
+
+            </div>
+
+            <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end font-sans">
+              <button
+                type="button"
+                onClick={() => setShowInstallInstructions(false)}
+                className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                {lang === 'mr' ? "समजले / बंद करा" : "Got it, Close"}
               </button>
             </div>
 
