@@ -444,13 +444,24 @@ export default function App() {
 
   const addFormNumberChip = (numStr: string) => {
     const clean = numStr.replace(/\D/g, '');
-    if (!clean) return;
+    if (!clean) {
+      setTimeout(() => {
+        tempFormNumberRef.current?.focus();
+      }, 50);
+      return;
+    }
     if (selectedFormNumbers.includes(clean)) {
       showToast(lang === 'mr' ? "हा फॉर्म नंबर आधीच जोडला आहे!" : "This form number is already added!", 'info');
+      setTimeout(() => {
+        tempFormNumberRef.current?.focus();
+      }, 50);
       return;
     }
     setSelectedFormNumbers([...selectedFormNumbers, clean]);
     setTempFormNumber('');
+    setTimeout(() => {
+      tempFormNumberRef.current?.focus();
+    }, 50);
   };
 
   const removeFormNumberChip = (numStr: string) => {
@@ -904,21 +915,18 @@ export default function App() {
         });
       };
 
-      let srNoKey = findKey(['serial', 'srno', 'votersr', 'voterid', 'voterserial', 'number', 'अनुक्रमांक', 'अक्र', 'मतदार']);
-      if (!srNoKey && keys.length > 0) {
-        srNoKey = keys[0];
-      }
-
+      // Explicitly match Voter Sr No column only if it mentions voter or yaadi or similar
+      const voterSrNoKey = findKey(['votersr', 'voterid', 'voterserial', 'votersrno', 'voter_no', 'मतदारअनुक्रमांक', 'मतदारक्र']);
       const formNoKey = findKey(['form', 'formno', 'formnumber', 'फॉर्म', 'क्रमांक', 'नंबर']);
       const recipientNameKey = findKey(['recipient', 'acceptor', 'representative', 'name', 'नाव', 'घेणाऱ्याचेनाव']);
       const recipientMobileKey = findKey(['mobile', 'phone', 'contact', 'मोबाईल', 'फोन', 'संपर्क']);
       const statusKey = findKey(['status', 'state', 'collected', 'distributed', 'स्थिती', 'स्टेटस', 'नोंद']);
 
-      if (!srNoKey) {
+      if (!formNoKey) {
         setExcelError(
           lang === 'mr' 
-            ? 'मतदार अनुक्रमांक (Serial Number / Sr No) असलेला कॉलम शोधता आला नाही. कृपया कॉलमचे नाव "Serial Number" किंवा "Sr No" किंवा "अनुक्रमांक" ठेवा.' 
-            : 'Could not automatically find "Serial Number" or "Sr No" column. Please rename column headers in your file.'
+            ? 'फॉर्म क्रमांक (Form No) असलेला कॉलम शोधता आला नाही. कृपया कॉलमचे नाव "Form No" किंवा "Form Number" किंवा "फॉर्म क्रमांक" ठेवा.' 
+            : 'Could not automatically find "Form No" or "Form Number" column. Please check column headers in your file.'
         );
         setIsProcessingExcel(false);
         return;
@@ -930,73 +938,59 @@ export default function App() {
       let successCount = 0;
 
       excelPreviewRows.forEach((row, idx) => {
-        const rawSrNoVal = row[srNoKey || ''];
-        if (rawSrNoVal === undefined || rawSrNoVal === null || String(rawSrNoVal).trim() === '') {
-          return;
-        }
-
-        const voterSrNos = parseRangesAndLists(rawSrNoVal);
-
+        // Find form numbers
         const rawFormNoVal = row[formNoKey || ''];
-        const formNos: string[] = [];
-        if (rawFormNoVal !== undefined && rawFormNoVal !== null) {
-          const rawFormStr = String(rawFormNoVal).trim();
-          // Split by hyphens, dashes, commas, semicolons, or whitespace (keeping only non-empty parts)
-          const parts = rawFormStr.split(/[-–—,，;|\s/]+/);
-          parts.forEach(part => {
-            const cleanVal = part.trim();
-            if (cleanVal) {
-              formNos.push(cleanVal);
-            }
-          });
+        if (rawFormNoVal === undefined || rawFormNoVal === null || String(rawFormNoVal).trim() === '') {
+          return; // Skip rows with empty form numbers
         }
 
-        const maxLen = Math.max(voterSrNos.length, formNos.length);
-        if (maxLen === 0) {
+        // Split form numbers by any hyphens, commas, semicolons, whitespace, etc.
+        const rawFormStr = String(rawFormNoVal).trim();
+        const formNos: string[] = [];
+        const parts = rawFormStr.split(/[-–—,，;|\s/]+/);
+        parts.forEach(part => {
+          const cleanVal = part.trim();
+          if (cleanVal) {
+            formNos.push(cleanVal);
+          }
+        });
+
+        if (formNos.length === 0) {
           return;
         }
 
-        const rowRecipientName = String(row[recipientNameKey || ''] || '').trim();
-        const rowRecipientMobile = String(row[recipientMobileKey || ''] || '').trim().replace(/\D/g, '');
-        const rawStatusVal = String(row[statusKey || ''] || '').toLowerCase();
-        
+        // Recipient details
+        const rowRecipientName = recipientNameKey ? String(row[recipientNameKey] || '').trim() : '';
+        const rowRecipientMobile = recipientMobileKey ? String(row[recipientMobileKey] || '').trim().replace(/\D/g, '') : '';
+        const rawStatusVal = statusKey ? String(row[statusKey] || '').toLowerCase() : '';
+
         let rowStatus: 'Distributed' | 'Collected' = 'Distributed';
         if (rawStatusVal.includes('collected') || rawStatusVal.includes('जमा') || rawStatusVal.includes('yes') || rawStatusVal.includes('done')) {
           rowStatus = 'Collected';
         }
 
-        for (let subIdx = 0; subIdx < maxLen; subIdx++) {
-          const voterSrNo = subIdx < voterSrNos.length ? voterSrNos[subIdx] : null;
+        // Voter Sr Nos (optional)
+        const rawSrNoVal = voterSrNoKey ? row[voterSrNoKey] : null;
+        const voterSrNos = rawSrNoVal !== null && rawSrNoVal !== undefined ? parseRangesAndLists(rawSrNoVal) : [];
+
+        // For each form number in this row, we create a separate entry
+        formNos.forEach((assignedFormNumber, subIdx) => {
+          // If a voter Sr No is available for this subIdx, or we use the first one if only one exists
+          let voterSrNo: string | null = null;
+          if (voterSrNos.length > 0) {
+            if (subIdx < voterSrNos.length) {
+              voterSrNo = voterSrNos[subIdx];
+            } else {
+              voterSrNo = voterSrNos[0]; // fallback to the first voter Sr No in the row
+            }
+          }
+
           const targetVoter = voterSrNo ? updatedVoters.find(v => v.srNo === voterSrNo) : null;
           const voterName = targetVoter ? targetVoter.name : null;
 
-          let assignedFormNumber = '';
-          if (formNos.length > 0) {
-            if (formNos.length === 1) {
-              const baseForm = parseInt(formNos[0], 10);
-              if (!isNaN(baseForm)) {
-                assignedFormNumber = String(baseForm + subIdx);
-              } else {
-                assignedFormNumber = formNos[0];
-              }
-            } else if (subIdx < formNos.length) {
-              assignedFormNumber = formNos[subIdx];
-            } else {
-              const lastForm = formNos[formNos.length - 1];
-              const baseForm = parseInt(lastForm, 10);
-              if (!isNaN(baseForm)) {
-                assignedFormNumber = String(baseForm + (subIdx - formNos.length + 1));
-              } else {
-                assignedFormNumber = lastForm;
-              }
-            }
-          } else {
-            assignedFormNumber = `GEN-${idx + 1}-${voterSrNo || subIdx + 1}`;
-          }
-
           // Skip if exact duplicate formNumber exists
           if (forms.some(f => f.formNumber === assignedFormNumber) || newRecords.some(r => r.formNumber === assignedFormNumber)) {
-            continue;
+            return;
           }
 
           newRecords.push({
@@ -1023,7 +1017,7 @@ export default function App() {
             });
           }
           successCount++;
-        }
+        });
       });
 
       if (newRecords.length === 0) {
