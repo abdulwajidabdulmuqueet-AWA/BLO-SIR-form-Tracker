@@ -25,7 +25,8 @@ import {
   X,
   Link2,
   Unlink,
-  Eye
+  Eye,
+  Database
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -172,6 +173,14 @@ export default function App() {
   const [excelError, setExcelError] = useState<string>('');
   const [excelPreviewRows, setExcelPreviewRows] = useState<any[]>([]);
   const [isProcessingExcel, setIsProcessingExcel] = useState(false);
+
+  // Backup & Restore states
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [backupError, setBackupError] = useState<string>('');
+  const [backupPreview, setBackupPreview] = useState<{ votersCount: number; formsCount: number; date: string } | null>(null);
+  const [backupParsedData, setBackupParsedData] = useState<any | null>(null);
+  const [restoreMode, setRestoreMode] = useState<'merge' | 'overwrite'>('merge');
 
   // Notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -1217,6 +1226,175 @@ export default function App() {
       setForms(defaultForms);
       showToast(lang === 'mr' ? "सर्व डेटा डीफॉल्ट वर रिसेट केला गेला!" : "All data reset to default!", 'info');
       setActiveTab('dashboard');
+    }
+  };
+
+  // Download backup handler
+  const handleDownloadBackup = () => {
+    try {
+      const backupData = {
+        appName: "BLO_SIR_Form_Tracker",
+        backupDate: new Date().toISOString(),
+        voters: voters,
+        forms: forms
+      };
+      
+      const jsonStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", url);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      downloadAnchor.setAttribute("download", `BLO_SIR_Backup_${dateStr}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      URL.revokeObjectURL(url);
+      
+      showToast(
+        lang === 'mr' 
+          ? "सिस्टीम बॅकअप यशस्वीरित्या डाउनलोड झाला!" 
+          : "System backup downloaded successfully!", 
+        'success'
+      );
+    } catch (err: any) {
+      console.error(err);
+      showToast(
+        lang === 'mr' 
+          ? "बॅकअप तयार करताना चूक झाली." 
+          : "Error creating backup file.", 
+        'error'
+      );
+    }
+  };
+
+  // Handle Backup File selection and parsing
+  const handleBackupFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setBackupFile(file);
+    setBackupError('');
+    setBackupPreview(null);
+    setBackupParsedData(null);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        const parsed = JSON.parse(text);
+        
+        // Basic schema validation
+        if (!parsed || typeof parsed !== 'object') {
+          throw new Error(lang === 'mr' ? 'अवैध फाईल फॉरमॅट' : 'Invalid file format');
+        }
+        if (!Array.isArray(parsed.voters) && !Array.isArray(parsed.blo_voters)) {
+          throw new Error(lang === 'mr' ? 'या फाईलमध्ये मतदार डेटा आढळला नाही.' : 'No voters data found in backup.');
+        }
+
+        const parsedVoters = parsed.voters || parsed.blo_voters || [];
+        const parsedForms = parsed.forms || parsed.blo_forms || [];
+        
+        setBackupPreview({
+          votersCount: parsedVoters.length,
+          formsCount: parsedForms.length,
+          date: parsed.backupDate || parsed.timestamp || new Date().toISOString()
+        });
+        setBackupParsedData({
+          voters: parsedVoters,
+          forms: parsedForms
+        });
+      } catch (err: any) {
+        console.error(err);
+        setBackupError(
+          lang === 'mr' 
+            ? "बॅकअप फाईल वाचता आली नाही. कृपया वैध .json बॅकअप फाईल निवडा." 
+            : "Failed to read backup file. Please select a valid .json backup file."
+        );
+      }
+    };
+    reader.onerror = () => {
+      setBackupError(lang === 'mr' ? "फाईल उघडताना त्रुटी आली." : "Error reading file.");
+    };
+    reader.readAsText(file);
+  };
+
+  // Apply restore logic
+  const handleApplyRestore = () => {
+    if (!backupParsedData) {
+      setBackupError(lang === 'mr' ? "कृपया आधी फाईल निवडा आणि लोड करा." : "Please select and load a backup file first.");
+      return;
+    }
+
+    try {
+      const incomingVoters: Voter[] = backupParsedData.voters;
+      const incomingForms: FormRecord[] = backupParsedData.forms;
+
+      if (restoreMode === 'overwrite') {
+        // Complete overwrite
+        saveVoters(incomingVoters);
+        saveForms(incomingForms);
+        showToast(
+          lang === 'mr' 
+            ? "बॅकअप पूर्णपणे रिस्टोर केला गेला! सर्व जुना डेटा बदलला आहे." 
+            : "Backup restored successfully! All existing data has been replaced.", 
+          'success'
+        );
+      } else {
+        // Safe Merge Mode
+        // Merge voters based on srNo
+        let mergedVoters = [...voters];
+        incomingVoters.forEach(iv => {
+          const idx = mergedVoters.findIndex(v => v.srNo === iv.srNo);
+          if (idx > -1) {
+            // Merge fields, priority to incoming backup fields if present
+            mergedVoters[idx] = { ...mergedVoters[idx], ...iv };
+          } else {
+            mergedVoters.push(iv);
+          }
+        });
+        // Sort merged voters numerically
+        mergedVoters.sort((a, b) => {
+          const numA = parseInt(a.srNo);
+          const numB = parseInt(b.srNo);
+          if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
+          return numA - numB;
+        });
+
+        // Merge forms based on id or formNumber
+        let mergedForms = [...forms];
+        incomingForms.forEach(ifm => {
+          const idx = mergedForms.findIndex(f => f.id === ifm.id || f.formNumber === ifm.formNumber);
+          if (idx > -1) {
+            mergedForms[idx] = { ...mergedForms[idx], ...ifm };
+          } else {
+            mergedForms.push(ifm);
+          }
+        });
+
+        saveVoters(mergedVoters);
+        saveForms(mergedForms);
+        showToast(
+          lang === 'mr' 
+            ? "डेटा यशस्वीरित्या मर्ज झाला! नवीन माहिती समाविष्ट केली गेली आहे." 
+            : "Data successfully merged! Backup information has been integrated.", 
+          'success'
+        );
+      }
+
+      // Close modal and reset state
+      setShowBackupModal(false);
+      setBackupFile(null);
+      setBackupPreview(null);
+      setBackupParsedData(null);
+    } catch (err: any) {
+      console.error(err);
+      setBackupError(
+        lang === 'mr' 
+          ? "बॅकअप लागू करताना त्रुटी आली: " + err.message 
+          : "Error applying backup: " + err.message
+      );
     }
   };
 
@@ -2652,6 +2830,79 @@ export default function App() {
               </div>
             </div>
 
+            {/* Backup & Restore Panel */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+              <div>
+                <h3 className="font-extrabold text-slate-950 text-lg flex items-center gap-2">
+                  <Database className="w-5 h-5 text-amber-600" />
+                  {lang === 'mr' ? "डेटा बॅकअप आणि सुरक्षितता" : "Data Backup & Security"}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  {lang === 'mr' 
+                    ? "तुमचा सर्व डेटा (मतदार यादी आणि फॉर्म वाटपाची माहिती) सुरक्षित ठेवण्यासाठी बॅकअप घ्या किंवा जुना बॅकअप पुन्हा लागू करा." 
+                    : "Save a local copy of your entire system's state or restore from an earlier backup to prevent any data loss."}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* Take Backup Card */}
+                <div className="border border-slate-200 hover:border-amber-300/60 p-5 rounded-2xl bg-slate-50 hover:bg-amber-50/20 transition-all flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    <div className="p-3 bg-amber-50 border border-amber-100 text-amber-700 rounded-xl w-max">
+                      <Download className="w-5 h-5" />
+                    </div>
+                    <h4 className="font-extrabold text-slate-900 text-base">
+                      {lang === 'mr' ? "बॅकअप फाईल डाउनलोड करा" : "Download Backup File"}
+                    </h4>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      {lang === 'mr' 
+                        ? "तुमच्या सर्व डिजिटल मतदारांचा आणि फॉर्म्सचा डेटा एका सुटसुटीत JSON फाईलमध्ये डाउनलोड करा. हा डेटा तुम्ही कधीही पुनर्स्थापित करू शकता." 
+                        : "Download your entire digital voters and form distribution logs in a secure JSON file. You can load this file back any time."}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleDownloadBackup}
+                    className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{lang === 'mr' ? "बॅकअप डाउनलोड करा" : "Download Backup"}</span>
+                  </button>
+                </div>
+
+                {/* Apply/Restore Backup Card */}
+                <div className="border border-slate-200 hover:border-amber-300/60 p-5 rounded-2xl bg-slate-50 hover:bg-amber-50/20 transition-all flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    <div className="p-3 bg-blue-50 border border-blue-100 text-blue-700 rounded-xl w-max">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <h4 className="font-extrabold text-slate-900 text-base">
+                      {lang === 'mr' ? "बॅकअप फाईल लागू करा (रीस्टोर)" : "Restore from Backup"}
+                    </h4>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      {lang === 'mr' 
+                        ? "पूर्वी डाऊनलोड केलेली बॅकअप फाईल (.json) निवडून सिस्टीममध्ये पुन्हा लोड करा. तुम्ही डेटा मर्ज करू शकता किंवा पूर्ण बदलू शकता." 
+                        : "Load an earlier saved .json backup file back into the system. You can choose to merge or overwrite your current state."}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setBackupFile(null);
+                      setBackupError('');
+                      setBackupPreview(null);
+                      setBackupParsedData(null);
+                      setShowBackupModal(true);
+                    }}
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>{lang === 'mr' ? "बॅकअप फाईल अपलोड करा" : "Upload Backup File"}</span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+
             {/* Clear Database Reset panel */}
             <div className="bg-red-50 border border-red-200 p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -3188,6 +3439,177 @@ export default function App() {
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: BACKUP & RESTORE */}
+      {showBackupModal && (
+        <div id="backup-restore-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col">
+            
+            <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-amber-400" />
+                <h3 className="font-extrabold text-base md:text-lg">
+                  {lang === 'mr' ? "सिस्टीम डेटा रीस्टोर करा" : "Restore System Backup"}
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowBackupModal(false);
+                  setBackupFile(null);
+                  setBackupError('');
+                  setBackupPreview(null);
+                  setBackupParsedData(null);
+                }}
+                className="text-slate-400 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 max-h-[80vh]">
+              
+              <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-200">
+                {lang === 'mr' 
+                  ? "पूर्वी डाउनलोड केलेली .json बॅकअप फाईल येथे अपलोड करा. फाईल मधील मतदार आणि फॉर्म वितरणाचा तपशील तपासला जाईल आणि त्यानंतर ॲपमध्ये लागू केला जाईल." 
+                  : "Upload a previously downloaded .json backup file. The system will inspect the voter records and form logs before applying them."}
+              </p>
+
+              {/* File input box */}
+              <div className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-2xl p-6 text-center transition-all bg-slate-50 hover:bg-amber-50/5 relative cursor-pointer group">
+                <input 
+                  type="file" 
+                  accept=".json" 
+                  onChange={handleBackupFileChange}
+                  className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                />
+                <div className="flex flex-col items-center justify-center space-y-2">
+                  <div className="p-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl group-hover:text-amber-600 group-hover:scale-105 transition-all shadow-xs">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-extrabold text-slate-900">
+                      {backupFile ? backupFile.name : (lang === 'mr' ? "बॅकअप (.json) फाईल निवडा" : "Click to select backup (.json) file")}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-semibold">
+                      {backupFile ? `${(backupFile.size / 1024).toFixed(1)} KB` : (lang === 'mr' ? "फक्त .json फाईल्स स्वीकृत" : "Only JSON files generated by this system")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {backupError && (
+                <div className="bg-red-50 text-red-800 p-3 rounded-xl border border-red-200 text-xs font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{backupError}</span>
+                </div>
+              )}
+
+              {/* Backup File Preview Stats */}
+              {backupPreview && (
+                <div className="bg-amber-50/40 border border-amber-200/60 rounded-xl p-4 space-y-3 font-sans">
+                  <h4 className="text-xs font-extrabold text-amber-900 uppercase tracking-wider">
+                    📊 {lang === 'mr' ? "बॅकअप फाईल विश्लेषण:" : "Backup File Inspection:"}
+                  </h4>
+                  
+                  <div className="grid grid-cols-2 gap-3 text-xs font-sans">
+                    <div className="bg-white border border-slate-100 p-2.5 rounded-lg text-center">
+                      <span className="text-slate-400 block font-semibold text-[10px] uppercase tracking-wide">
+                        {lang === 'mr' ? "एकूण मतदार" : "Total Voters"}
+                      </span>
+                      <strong className="text-slate-900 text-base font-black mt-1 block">{backupPreview.votersCount}</strong>
+                    </div>
+                    <div className="bg-white border border-slate-100 p-2.5 rounded-lg text-center">
+                      <span className="text-slate-400 block font-semibold text-[10px] uppercase tracking-wide">
+                        {lang === 'mr' ? "वितरित फॉर्म" : "Distributed Forms"}
+                      </span>
+                      <strong className="text-slate-900 text-base font-black mt-1 block">{backupPreview.formsCount}</strong>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-500 font-medium flex justify-between pt-1 border-t border-amber-200/50">
+                    <span>{lang === 'mr' ? "तयार केल्याची तारीख:" : "Backup Created:"}</span>
+                    <strong className="text-slate-700">{new Date(backupPreview.date).toLocaleString()}</strong>
+                  </div>
+
+                  {/* Mode options */}
+                  <div className="space-y-2 pt-3 border-t border-amber-200/50">
+                    <label className="block text-xs font-bold text-slate-800">
+                      ⚙️ {lang === 'mr' ? "रीस्टोर करण्याची पद्धत निवडा:" : "Choose Restore Strategy:"}
+                    </label>
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRestoreMode('merge')}
+                        className={`p-3 rounded-xl border text-xs font-bold text-left transition-all cursor-pointer ${
+                          restoreMode === 'merge'
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <div className="font-extrabold">{lang === 'mr' ? "मर्ज करा (Merge)" : "Merge Safely"}</div>
+                        <div className={`text-[10px] mt-0.5 font-medium ${restoreMode === 'merge' ? 'text-amber-100' : 'text-slate-400'}`}>
+                          {lang === 'mr' ? "सध्याचा डेटा सुरक्षित राहील" : "Keeps & updates current data"}
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRestoreMode('overwrite')}
+                        className={`p-3 rounded-xl border text-xs font-bold text-left transition-all cursor-pointer ${
+                          restoreMode === 'overwrite'
+                            ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <div className="font-extrabold">{lang === 'mr' ? "रिप्लेस करा (Overwrite)" : "Replace Entirely"}</div>
+                        <div className={`text-[10px] mt-0.5 font-medium ${restoreMode === 'overwrite' ? 'text-rose-100' : 'text-slate-400'}`}>
+                          {lang === 'mr' ? "सर्व जुना डेटा काढून टाका" : "Deletes all current data first"}
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end gap-3 font-sans">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBackupModal(false);
+                  setBackupFile(null);
+                  setBackupError('');
+                  setBackupPreview(null);
+                  setBackupParsedData(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 transition-colors cursor-pointer"
+              >
+                {lang === 'mr' ? "रद्द करा" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyRestore}
+                disabled={!backupParsedData}
+                className={`text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer font-sans ${
+                  backupParsedData 
+                    ? (restoreMode === 'overwrite' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-600 hover:bg-amber-700') 
+                    : 'bg-slate-300 cursor-not-allowed'
+                }`}
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  {restoreMode === 'overwrite' 
+                    ? (lang === 'mr' ? "पूर्ण ओव्हरराईट लागू करा" : "Confirm Full Overwrite") 
+                    : (lang === 'mr' ? "मर्ज डेटा लागू करा" : "Apply Merge Restore")}
+                </span>
+              </button>
+            </div>
+
           </div>
         </div>
       )}
