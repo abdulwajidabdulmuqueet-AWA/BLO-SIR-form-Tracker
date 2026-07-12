@@ -904,7 +904,11 @@ export default function App() {
         });
       };
 
-      const srNoKey = findKey(['serial', 'srno', 'votersr', 'voterid', 'voterserial', 'number', 'अनुक्रमांक', 'अक्र', 'मतदार']);
+      let srNoKey = findKey(['serial', 'srno', 'votersr', 'voterid', 'voterserial', 'number', 'अनुक्रमांक', 'अक्र', 'मतदार']);
+      if (!srNoKey && keys.length > 0) {
+        srNoKey = keys[0];
+      }
+
       const formNoKey = findKey(['form', 'formno', 'formnumber', 'फॉर्म', 'क्रमांक', 'नंबर']);
       const recipientNameKey = findKey(['recipient', 'acceptor', 'representative', 'name', 'नाव', 'घेणाऱ्याचेनाव']);
       const recipientMobileKey = findKey(['mobile', 'phone', 'contact', 'मोबाईल', 'फोन', 'संपर्क']);
@@ -926,18 +930,31 @@ export default function App() {
       let successCount = 0;
 
       excelPreviewRows.forEach((row, idx) => {
-        const rawSrNoVal = row[srNoKey];
+        const rawSrNoVal = row[srNoKey || ''];
         if (rawSrNoVal === undefined || rawSrNoVal === null || String(rawSrNoVal).trim() === '') {
           return;
         }
 
         const voterSrNos = parseRangesAndLists(rawSrNoVal);
-        if (voterSrNos.length === 0) {
-          return;
-        }
 
         const rawFormNoVal = row[formNoKey || ''];
-        const formNos = parseRangesAndLists(rawFormNoVal);
+        const formNos: string[] = [];
+        if (rawFormNoVal !== undefined && rawFormNoVal !== null) {
+          const rawFormStr = String(rawFormNoVal).trim();
+          // Split by hyphens, dashes, commas, semicolons, or whitespace (keeping only non-empty parts)
+          const parts = rawFormStr.split(/[-–—,，;|\s/]+/);
+          parts.forEach(part => {
+            const cleanVal = part.trim();
+            if (cleanVal) {
+              formNos.push(cleanVal);
+            }
+          });
+        }
+
+        const maxLen = Math.max(voterSrNos.length, formNos.length);
+        if (maxLen === 0) {
+          return;
+        }
 
         const rowRecipientName = String(row[recipientNameKey || ''] || '').trim();
         const rowRecipientMobile = String(row[recipientMobileKey || ''] || '').trim().replace(/\D/g, '');
@@ -948,8 +965,9 @@ export default function App() {
           rowStatus = 'Collected';
         }
 
-        voterSrNos.forEach((voterSrNo, subIdx) => {
-          const targetVoter = updatedVoters.find(v => v.srNo === voterSrNo);
+        for (let subIdx = 0; subIdx < maxLen; subIdx++) {
+          const voterSrNo = subIdx < voterSrNos.length ? voterSrNos[subIdx] : null;
+          const targetVoter = voterSrNo ? updatedVoters.find(v => v.srNo === voterSrNo) : null;
           const voterName = targetVoter ? targetVoter.name : null;
 
           let assignedFormNumber = '';
@@ -964,15 +982,21 @@ export default function App() {
             } else if (subIdx < formNos.length) {
               assignedFormNumber = formNos[subIdx];
             } else {
-              assignedFormNumber = formNos[formNos.length - 1];
+              const lastForm = formNos[formNos.length - 1];
+              const baseForm = parseInt(lastForm, 10);
+              if (!isNaN(baseForm)) {
+                assignedFormNumber = String(baseForm + (subIdx - formNos.length + 1));
+              } else {
+                assignedFormNumber = lastForm;
+              }
             }
           } else {
-            assignedFormNumber = `GEN-${idx + 1}-${voterSrNo}`;
+            assignedFormNumber = `GEN-${idx + 1}-${voterSrNo || subIdx + 1}`;
           }
 
           // Skip if exact duplicate formNumber exists
           if (forms.some(f => f.formNumber === assignedFormNumber) || newRecords.some(r => r.formNumber === assignedFormNumber)) {
-            return;
+            continue;
           }
 
           newRecords.push({
@@ -988,7 +1012,7 @@ export default function App() {
             notes: lang === 'mr' ? 'एक्सेल शीटद्वारे आयात केले' : 'Bulk imported via Excel Sheet'
           });
 
-          if (targetVoter) {
+          if (targetVoter && voterSrNo) {
             updatedVoters = updatedVoters.map(v => {
               if (v.srNo === targetVoter.srNo) {
                 const existing = v.linkedFormNo ? v.linkedFormNo.split(', ') : [];
@@ -999,7 +1023,7 @@ export default function App() {
             });
           }
           successCount++;
-        });
+        }
       });
 
       if (newRecords.length === 0) {
@@ -1018,8 +1042,8 @@ export default function App() {
 
       showToast(
         lang === 'mr' 
-          ? `${successCount} मतदारांचे फॉर्म यशस्वीरित्या अपडेट केले गेले!` 
-          : `Successfully imported form updates for ${successCount} voters!`,
+          ? `यशस्वीरित्या ${successCount} फॉर्म रेकॉर्ड्स आयात आणि अपडेट केले गेले!` 
+          : `Successfully imported and registered ${successCount} form records!`,
         'success'
       );
 
