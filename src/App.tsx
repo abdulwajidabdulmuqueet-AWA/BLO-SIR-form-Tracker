@@ -147,6 +147,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [voterSearchQuery, setVoterSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'Distributed' | 'Collected'>('all');
+  const [formSortOrder, setFormSortOrder] = useState<'form-asc' | 'form-desc' | 'date-desc' | 'date-asc'>('form-asc');
 
   // OCR Upload states
   const [ocrText, setOcrText] = useState('');
@@ -371,7 +372,7 @@ export default function App() {
 
   // Filters and searches forms for Collection Tab
   const filteredForms = useMemo(() => {
-    return forms.filter(f => {
+    const filtered = forms.filter(f => {
       const matchesSearch = 
         f.formNumber.includes(searchQuery) ||
         f.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -384,7 +385,21 @@ export default function App() {
 
       return matchesSearch && matchesStatus;
     });
-  }, [forms, searchQuery, statusFilter]);
+
+    // Sort according to formSortOrder
+    return filtered.sort((a, b) => {
+      if (formSortOrder === 'form-asc') {
+        return a.formNumber.localeCompare(b.formNumber, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (formSortOrder === 'form-desc') {
+        return b.formNumber.localeCompare(a.formNumber, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (formSortOrder === 'date-desc') {
+        return new Date(b.distributedAt).getTime() - new Date(a.distributedAt).getTime();
+      } else if (formSortOrder === 'date-asc') {
+        return new Date(a.distributedAt).getTime() - new Date(b.distributedAt).getTime();
+      }
+      return 0;
+    });
+  }, [forms, searchQuery, statusFilter, formSortOrder]);
 
   // Filters and searches voters for Voter Tab
   const filteredVoters = useMemo(() => {
@@ -2326,40 +2341,68 @@ export default function App() {
                 />
               </div>
 
-              {/* Status Filters */}
-              <div className="flex gap-2 w-full md:w-auto overflow-x-auto">
-                <button
-                  onClick={() => setStatusFilter('all')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    statusFilter === 'all' 
-                      ? 'bg-amber-600 text-white shadow-xs' 
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  {lang === 'mr' ? "सर्व फॉर्म" : "All Forms"}
-                </button>
-                <button
-                  onClick={() => setStatusFilter('Distributed')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    statusFilter === 'Distributed' 
-                      ? 'bg-amber-600 text-white shadow-xs' 
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                  {lang === 'mr' ? "प्रलंबित (Distributed)" : "Pending (Distributed)"}
-                </button>
-                <button
-                  onClick={() => setStatusFilter('Collected')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    statusFilter === 'Collected' 
-                      ? 'bg-amber-600 text-white shadow-xs' 
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                  {lang === 'mr' ? "जमा (Collected)" : "Collected"}
-                </button>
+              {/* Filters and Sorting Wrapper */}
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-stretch sm:items-center">
+                {/* Status Filters */}
+                <div className="flex gap-2 overflow-x-auto shrink-0">
+                  <button
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      statusFilter === 'all' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {lang === 'mr' ? "सर्व फॉर्म" : "All Forms"}
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('Distributed')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      statusFilter === 'Distributed' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    {lang === 'mr' ? "प्रलंबित (Distributed)" : "Pending (Distributed)"}
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('Collected')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      statusFilter === 'Collected' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    {lang === 'mr' ? "जमा (Collected)" : "Collected"}
+                  </button>
+                </div>
+
+                {/* Sort Option Dropdown */}
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 shrink-0">
+                  <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                    {lang === 'mr' ? "क्रमवारी:" : "Sort:"}
+                  </span>
+                  <select
+                    value={formSortOrder}
+                    onChange={(e) => setFormSortOrder(e.target.value as any)}
+                    className="bg-transparent text-xs font-bold text-slate-700 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="form-asc">
+                      {lang === 'mr' ? "लहान ते मोठे ↑" : "Form No: Low to High ↑"}
+                    </option>
+                    <option value="form-desc">
+                      {lang === 'mr' ? "मोठे ते लहान ↓" : "Form No: High to Low ↓"}
+                    </option>
+                    <option value="date-desc">
+                      {lang === 'mr' ? "तारीख (नवीन आधी)" : "Date: Newest First"}
+                    </option>
+                    <option value="date-asc">
+                      {lang === 'mr' ? "तारीख (जुने आधी)" : "Date: Oldest First"}
+                    </option>
+                  </select>
+                </div>
               </div>
 
             </div>
@@ -2369,8 +2412,23 @@ export default function App() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 text-slate-400 font-bold text-xs uppercase bg-slate-50/70">
-                      <th className="py-3 px-4">{t.formNo[lang]}</th>
+                    <tr className="border-b border-slate-200 text-slate-400 font-bold text-xs uppercase bg-slate-50/70 select-none">
+                      <th 
+                        className="py-3 px-4 cursor-pointer hover:bg-slate-100/80 transition-colors group"
+                        onClick={() => {
+                          setFormSortOrder(prev => prev === 'form-asc' ? 'form-desc' : 'form-asc');
+                        }}
+                        title={lang === 'mr' ? "फॉर्म नंबरनुसार क्रमवारी बदला" : "Click to toggle Form No. sorting"}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>{t.formNo[lang]}</span>
+                          {formSortOrder === 'form-asc' && <span className="text-[10px] text-amber-600 font-extrabold">▲</span>}
+                          {formSortOrder === 'form-desc' && <span className="text-[10px] text-amber-600 font-extrabold">▼</span>}
+                          {formSortOrder !== 'form-asc' && formSortOrder !== 'form-desc' && (
+                            <span className="text-[10px] text-slate-300 group-hover:text-amber-500 font-extrabold">⇅</span>
+                          )}
+                        </div>
+                      </th>
                       <th className="py-3 px-4">{t.recipient[lang]}</th>
                       <th className="py-3 px-4">{t.voterLinked[lang]}</th>
                       <th className="py-3 px-4">{t.status[lang]}</th>
