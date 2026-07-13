@@ -88,9 +88,9 @@ Return ONLY a valid JSON array conforming to this schema. Do not include any mar
       };
     }
 
-    console.log("Calling Gemini API (model: gemini-3.5-flash) with responseSchema configuration...");
+    console.log("Calling Gemini API (model: gemini-3.1-flash-lite) with responseSchema configuration...");
     const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-3.1-flash-lite',
       contents,
       config: {
         responseMimeType: 'application/json',
