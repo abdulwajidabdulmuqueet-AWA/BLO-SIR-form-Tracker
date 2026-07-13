@@ -7,8 +7,13 @@ import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Safely get directory path in both CJS and ESM environments
+const currentDir = typeof __dirname !== 'undefined' 
+  ? __dirname 
+  : (() => {
+      const metaUrl = (import.meta as any)?.url;
+      return metaUrl ? path.dirname(fileURLToPath(metaUrl)) : process.cwd();
+    })();
 
 async function startServer() {
   const app = express();
@@ -30,7 +35,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Serve static assets in production
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.join(currentDir, 'dist');
     app.use(express.static(distPath));
 
     // Fallback to SPA router

@@ -788,6 +788,107 @@ export default function App() {
     return results;
   };
 
+  // Helper to parse Excel Voter list in frontend
+  const parseExcelVoterList = (file: File): Promise<Voter[]> => {
+    return new Promise<Voter[]>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const data = evt.target?.result;
+          const workbook = XLSX.read(data, { type: 'binary' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json<any>(worksheet);
+
+          if (json.length === 0) {
+            reject(new Error(lang === 'mr' ? 'निवडलेली फाईल रिकामी आहे.' : 'Selected file is empty.'));
+            return;
+          }
+
+          const firstRow = json[0];
+          const keys = Object.keys(firstRow);
+          
+          const findKey = (candidates: string[]) => {
+            return keys.find(k => {
+              const lowerK = k.toLowerCase().replace(/[\s_\-.]/g, '');
+              return candidates.some(c => lowerK.includes(c) || c.includes(lowerK));
+            });
+          };
+
+          const srNoKey = findKey(['srno', 'serial', 'no', 'votersr', 'अनुक्रमांक', 'अनुक्र', 'क्र']);
+          const nameKey = findKey(['name', 'votername', 'fullname', 'नाव', 'मतदाराचेनाव']);
+          const ageKey = findKey(['age', 'वय']);
+          const genderKey = findKey(['gender', 'sex', 'लिंग']);
+          const epicKey = findKey(['epic', 'card', 'id', 'ओळखपत्र', 'ओळखपत्रक्र', 'इपिक']);
+          const houseNoKey = findKey(['house', 'houseno', 'address', 'घरक्रमांक', 'घरक्र']);
+
+          const parsedVoters: Voter[] = [];
+
+          json.forEach((row, idx) => {
+            let rawSr = '';
+            if (srNoKey && row[srNoKey] !== undefined && row[srNoKey] !== null) {
+              rawSr = String(row[srNoKey]).trim();
+            } else {
+              rawSr = String(idx + 1);
+            }
+
+            let rawName = '';
+            if (nameKey && row[nameKey] !== undefined && row[nameKey] !== null) {
+              rawName = String(row[nameKey]).trim();
+            } else {
+              return; // Skip row if name is missing
+            }
+
+            let parsedAge: number | null = null;
+            if (ageKey && row[ageKey] !== undefined && row[ageKey] !== null) {
+              const parsed = parseInt(row[ageKey], 10);
+              if (!isNaN(parsed)) {
+                parsedAge = parsed;
+              }
+            }
+
+            let rawGender = 'Male';
+            if (genderKey && row[genderKey] !== undefined && row[genderKey] !== null) {
+              const genStr = String(row[genderKey]).toLowerCase().trim();
+              if (genStr.includes('female') || genStr.includes('f') || genStr.includes('स्त्री') || genStr.includes('महिला')) {
+                rawGender = 'Female';
+              } else if (genStr.includes('other') || genStr.includes('o') || genStr.includes('इतर')) {
+                rawGender = 'Other';
+              }
+            }
+
+            let rawEpic = '';
+            if (epicKey && row[epicKey] !== undefined && row[epicKey] !== null) {
+              rawEpic = String(row[epicKey]).trim().toUpperCase();
+            }
+
+            let rawHouse = '';
+            if (houseNoKey && row[houseNoKey] !== undefined && row[houseNoKey] !== null) {
+              rawHouse = String(row[houseNoKey]).trim();
+            }
+
+            parsedVoters.push({
+              srNo: rawSr,
+              name: rawName,
+              epic: rawEpic,
+              age: parsedAge,
+              gender: rawGender,
+              houseNo: rawHouse,
+            });
+          });
+
+          resolve(parsedVoters);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => {
+        reject(new Error(lang === 'mr' ? 'फाईल उघडता आली नाही.' : 'Failed to read file.'));
+      };
+      reader.readAsBinaryString(file);
+    });
+  };
+
   // Handle Voter List PDF / Image File changes
   const handleVoterFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -795,6 +896,13 @@ export default function App() {
     setVoterFile(file);
     setVoterFileError('');
     setOcrText(''); // Clear text when file is uploaded
+
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv');
+    if (isExcel) {
+      setVoterFileBase64('excel-placeholder');
+      setVoterFileMimeType('excel');
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -811,13 +919,63 @@ export default function App() {
 
   // Call Gemini AI server-side endpoint to parse the uploaded PDF / Image file
   const handleParsePdfOrImage = async () => {
-    if (!voterFileBase64) {
+    if (!voterFile) {
       setVoterFileError(lang === 'mr' ? 'कृपया आधी फाईल निवडा.' : 'Please select a file first.');
       return;
     }
 
     setIsParsingOcr(true);
     setVoterFileError('');
+
+    // If it is an Excel/CSV file, use frontend parser
+    if (voterFileMimeType === 'excel') {
+      try {
+        const parsedVoters = await parseExcelVoterList(voterFile);
+        
+        if (parsedVoters.length === 0) {
+          setVoterFileError(lang === 'mr' ? 'एक्सेल फाईलमध्ये कोणतेही मतदार सापडले नाहीत. कृपया दुसरी फाईल निवडा.' : 'No voters found in Excel. Please try another file.');
+          setIsParsingOcr(false);
+          return;
+        }
+
+        const mergedVoters = [...voters];
+        parsedVoters.forEach(pv => {
+          const existingIdx = mergedVoters.findIndex(v => v.srNo === pv.srNo);
+          if (existingIdx > -1) {
+            mergedVoters[existingIdx] = { ...mergedVoters[existingIdx], ...pv };
+          } else {
+            mergedVoters.push(pv);
+          }
+        });
+
+        // Sort numerically
+        mergedVoters.sort((a, b) => {
+          const numA = parseInt(a.srNo);
+          const numB = parseInt(b.srNo);
+          if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
+          return numA - numB;
+        });
+
+        saveVoters(mergedVoters);
+        showToast(
+          lang === 'mr' 
+            ? `${parsedVoters.length} मतदार एक्सेल मधून यशस्वीरित्या आयात केले गेले!` 
+            : `${parsedVoters.length} voters successfully imported from Excel!`, 
+          'success'
+        );
+        
+        // Reset state and close modal
+        setVoterFile(null);
+        setVoterFileBase64('');
+        setShowOcrModal(false);
+      } catch (err: any) {
+        console.error(err);
+        setVoterFileError(err.message || (lang === 'mr' ? 'एक्सेल डेटा प्रोसेसिंग अयशस्वी.' : 'Excel parsing failed.'));
+      } finally {
+        setIsParsingOcr(false);
+      }
+      return;
+    }
 
     try {
       const res = await fetch('/api/parse-yaadi', {
@@ -3130,7 +3288,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <h3 className="font-extrabold text-base md:text-lg">
-                  {lang === 'mr' ? "AI वर्ड फाईल / पीडीएफ मतदार यादी आयात" : "AI Word File / PDF Voter List Import"}
+                  {lang === 'mr' ? "AI वर्ड फाईल / पीडीएफ / एक्सेल मतदार यादी आयात" : "AI Word / PDF / Excel Voter List Import"}
                 </h3>
               </div>
               <button 
@@ -3154,7 +3312,7 @@ export default function App() {
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  📁 {lang === 'mr' ? "वर्ड फाईल / पीडीएफ अपलोड" : "Word File / PDF Upload"}
+                  📁 {lang === 'mr' ? "वर्ड / पीडीएफ / एक्सेल अपलोड" : "Word / PDF / Excel Upload"}
                 </button>
                 <button
                   type="button"
@@ -3173,14 +3331,14 @@ export default function App() {
                 <div className="space-y-4">
                   <p className="text-xs text-slate-600 leading-relaxed bg-amber-50/50 p-4 rounded-xl border border-amber-200/50">
                     {lang === 'mr' 
-                      ? "निवडणूक आयोगाची मतदार यादी वर्ड फाईल (.docx), पीडीएफ (PDF) किंवा तिच्या पानाचा फोटो अपलोड करा. आमचे प्रगत AI मॉडेल मतदारांची माहिती स्वयंचलितपणे वाचून मुख्य यादीत अपडेट करेल." 
-                      : "Upload an official Voter List Word document (.docx), PDF, or a photo of a voter list page. Gemini AI will automatically extract and structure all voter records into your dashboard."}
+                      ? "निवडणूक आयोगाची मतदार यादी वर्ड फाईल (.docx), पीडीएफ (PDF), एक्सेल (.xlsx/.xls/CSV) किंवा तिच्या पानाचा फोटो अपलोड करा. आमचे प्रगत AI मॉडेल आणि ऑटो-पार्सर मतदारांची माहिती स्वयंचलितपणे वाचून मुख्य यादीत अपडेट करेल." 
+                      : "Upload an official Voter List Word document (.docx), PDF, Excel (.xlsx/.xls/CSV) spreadsheet, or a photo of a voter list page. Our advanced parser and AI will automatically extract and structure all voter records into your dashboard."}
                   </p>
 
                   <div className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-2xl p-8 text-center transition-all bg-slate-50 hover:bg-amber-50/5 relative cursor-pointer group">
                     <input 
                       type="file" 
-                      accept="application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*" 
+                      accept="application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
                       onChange={handleVoterFileChange}
                       className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
                       disabled={isParsingOcr}
@@ -3194,7 +3352,7 @@ export default function App() {
                           {voterFile ? voterFile.name : (lang === 'mr' ? "फाईल निवडा किंवा येथे ड्रॅग करा" : "Click to select or drag and drop file")}
                         </p>
                         <p className="text-[10px] text-slate-400 font-semibold">
-                          {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • ${voterFile.name.endsWith('.docx') || voterFile.name.endsWith('.doc') ? 'Word Document' : 'File'}` : (lang === 'mr' ? "मर्यादा: ५ MB पर्यंत (Yaadi Word, PDF, PNG, JPG)" : "Accepts official Word, PDF, PNG, or JPEG up to 5MB")}
+                          {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • ${voterFile.name.endsWith('.docx') || voterFile.name.endsWith('.doc') ? 'Word Document' : voterFile.name.endsWith('.xlsx') || voterFile.name.endsWith('.xls') || voterFile.name.endsWith('.csv') ? 'Excel/CSV Spreadsheet' : 'File'}` : (lang === 'mr' ? "मर्यादा: ५ MB पर्यंत (Word, PDF, Excel, PNG, JPG)" : "Accepts official Word, PDF, Excel, PNG, or JPEG up to 5MB")}
                         </p>
                       </div>
                     </div>
