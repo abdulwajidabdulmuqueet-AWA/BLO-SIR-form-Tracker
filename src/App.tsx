@@ -699,7 +699,15 @@ export default function App() {
         body: JSON.stringify({ ocrText })
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(lang === 'mr' 
+          ? `सर्व्हरकडून अवैध प्रतिसाद आला (Status ${res.status}): ${responseText.slice(0, 150)}` 
+          : `Invalid server response (Status ${res.status}): ${responseText.slice(0, 150)}`);
+      }
 
       if (res.ok && data.success && Array.isArray(data.voters)) {
         // Merge or replace voters
@@ -733,7 +741,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setOcrError(lang === 'mr' ? 'सर्व्हरशी संपर्क साधताना त्रुटी आली. कृपया सेटिंग्ज तपासा.' : 'Server communication error. Please check configurations.');
+      setOcrError((lang === 'mr' ? 'सर्व्हर त्रुटी: ' : 'Server communication error: ') + (err.message || err));
     } finally {
       setIsParsingOcr(false);
     }
@@ -823,7 +831,15 @@ export default function App() {
         })
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(lang === 'mr' 
+          ? `सर्व्हरकडून अवैध प्रतिसाद आला (Status ${res.status}): ${responseText.slice(0, 150)}` 
+          : `Invalid server response (Status ${res.status}): ${responseText.slice(0, 150)}`);
+      }
 
       if (res.ok && data.success && Array.isArray(data.voters)) {
         const parsedVoters: Voter[] = data.voters;
@@ -869,7 +885,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setVoterFileError(lang === 'mr' ? 'सर्व्हरशी संपर्क साधताना त्रुटी आली. कृपया फाईलचा आकार तपासा.' : 'Server communication error. Please check file size.');
+      setVoterFileError((lang === 'mr' ? 'सर्व्हर त्रुटी: ' : 'Server communication error: ') + (err.message || err));
     } finally {
       setIsParsingOcr(false);
     }

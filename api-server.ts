@@ -18,27 +18,33 @@ const ai = new GoogleGenAI({
 
 // Endpoint to parse voter list OCR text or PDF/Image files
 router.post('/parse-yaadi', async (req, res) => {
+  console.log("=== Received Request to /api/parse-yaadi ===");
   try {
     const { ocrText, fileBase64, mimeType } = req.body;
     
     if (!ocrText && !fileBase64) {
+      console.warn("Bad Request: Neither OCR text nor File base64 data was provided.");
       return res.status(400).json({ error: 'Either OCR text or File base64 data is required' });
     }
 
-    let contents: any[] = [];
+    let contents: any;
 
     if (fileBase64 && mimeType) {
+      console.log(`Processing file payload: mimeType=${mimeType}, base64 length=${fileBase64.length}`);
       // Remove data URL prefix if present
       const cleanBase64 = fileBase64.replace(/^data:.*?;base64,/, '');
-      contents = [
-        {
-          inlineData: {
-            data: cleanBase64,
-            mimeType: mimeType
-          }
-        },
-        {
-          text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
+      console.log(`Cleaned base64 length: ${cleanBase64.length}`);
+      
+      contents = {
+        parts: [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: mimeType
+            }
+          },
+          {
+            text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
 Parse the attached file containing a voter list into a structured JSON array of voter objects.
 
 Strict Output Rules:
@@ -51,12 +57,15 @@ Strict Output Rules:
 7. Maintain the relative order of voters as they appear in the document.
 
 Return ONLY a valid JSON array conforming to this schema. Do not include any markdown formatting, no preamble, and no explanation.`
-        }
-      ];
+          }
+        ]
+      };
     } else {
-      contents = [
-        {
-          text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
+      console.log(`Processing plain text OCR payload: text length=${ocrText.length}`);
+      contents = {
+        parts: [
+          {
+            text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
 Parse the following messy OCR text of a voter list (which may contain mixed Marathi, English, or OCR typos) into a structured JSON array of voter objects.
 
 Strict Output Rules:
@@ -74,10 +83,12 @@ ${ocrText}
 """
 
 Return ONLY a valid JSON array conforming to this schema. Do not include any markdown formatting, no preamble, and no explanation.`
-        }
-      ];
+          }
+        ]
+      };
     }
 
+    console.log("Calling Gemini API (model: gemini-3.5-flash) with responseSchema configuration...");
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
       contents,
@@ -120,16 +131,19 @@ Return ONLY a valid JSON array conforming to this schema. Do not include any mar
     });
 
     const resultText = response.text?.trim() || '[]';
+    console.log(`Gemini raw response text length: ${resultText.length}`);
     
     // Parse to ensure it is valid JSON and send back
     try {
       const parsedData = JSON.parse(resultText);
+      console.log(`Successfully parsed voter list. Total voters: ${parsedData.length}`);
       return res.json({ success: true, voters: parsedData });
     } catch (parseError) {
-      console.error("JSON parsing failed for text:", resultText);
+      console.warn("Direct JSON parsing failed, attempting markdown cleanup for:", resultText.slice(0, 200));
       // Fallback in case Gemini wrapped it in markdown or returned invalid format
       const cleanJson = resultText.replace(/```json|```/g, '').trim();
       const parsedData = JSON.parse(cleanJson);
+      console.log(`Successfully parsed voter list after cleanup. Total voters: ${parsedData.length}`);
       return res.json({ success: true, voters: parsedData });
     }
 
