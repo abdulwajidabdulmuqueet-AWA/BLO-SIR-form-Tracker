@@ -494,6 +494,11 @@ export default function App() {
         matchedVoter = voters.find(v => v.srNo === formRecord.voterSrNo);
       }
 
+      // 3. Fallback: match by formNumber matching voter's srNo
+      if (!matchedVoter) {
+        matchedVoter = voters.find(v => v.srNo === formNum);
+      }
+
       return {
         formNumber: formNum,
         formRecord,
@@ -1621,36 +1626,44 @@ export default function App() {
 
   // Generate Reports
   const downloadFullDistributionCSV = () => {
-    const exportData = forms.map(f => ({
-      'Form Number (फॉर्म क्र)': f.formNumber,
-      'Recipient Name (स्वीकारणाऱ्याचे नाव)': f.recipientName,
-      'Mobile Number (मोबाईल)': f.recipientMobile,
-      'Voter List Serial No (मतदार यादी अनुक्रमांक)': f.voterSrNo || 'N/A',
-      'Voter Name (मतदाराचे नाव)': f.voterName || 'N/A',
-      'Status (स्थिती)': f.status === 'Collected' ? (lang === 'mr' ? 'जमा झाले (Collected)' : 'Collected') : (lang === 'mr' ? 'प्रलंबित (Distributed)' : 'Distributed'),
-      'Distribution Date (वाटप तारीख)': new Date(f.distributedAt).toLocaleString(),
-      'Collection Date (जमा तारीख)': f.collectedAt ? new Date(f.collectedAt).toLocaleString() : 'N/A',
-      'Notes (टीप)': f.notes || ''
-    }));
+    const exportData = forms.map(f => {
+      const vSr = f.voterSrNo || f.formNumber;
+      const matchedVoter = voters.find(v => v.srNo === vSr);
+      return {
+        'Form Number (फॉर्म क्र)': f.formNumber,
+        'Recipient Name (स्वीकारणाऱ्याचे नाव)': f.recipientName,
+        'Mobile Number (मोबाईल)': f.recipientMobile,
+        'Voter List Serial No (मतदार यादी अनुक्रमांक)': matchedVoter ? matchedVoter.srNo : 'N/A',
+        'Voter Name (मतदाराचे नाव)': matchedVoter ? matchedVoter.name : 'N/A',
+        'Status (स्थिती)': f.status === 'Collected' ? (lang === 'mr' ? 'जमा झाले (Collected)' : 'Collected') : (lang === 'mr' ? 'प्रलंबित (Distributed)' : 'Distributed'),
+        'Distribution Date (वाटप तारीख)': new Date(f.distributedAt).toLocaleString(),
+        'Collection Date (जमा तारीख)': f.collectedAt ? new Date(f.collectedAt).toLocaleString() : 'N/A',
+        'Notes (टीप)': f.notes || ''
+      };
+    });
     exportToCSV(exportData, 'BLO_SIR_Form_Distribution_Sheet');
   };
 
   const downloadPendingCallListCSV = () => {
     const pendingForms = forms.filter(f => f.status === 'Distributed');
-    const exportData = pendingForms.map(f => ({
-      'Recipient Name (नाव)': f.recipientName,
-      'Mobile Number (मोबाईल)': f.recipientMobile,
-      'Form Number (फॉर्म क्र)': f.formNumber,
-      'Linked Voter SrNo (मतदार अनुक्रमांक)': f.voterSrNo || 'N/A',
-      'Linked Voter Name (मतदाराचे नाव)': f.voterName || 'N/A',
-      'Days Since Distribution (वाटपापासून दिवस)': Math.floor((Date.now() - new Date(f.distributedAt).getTime()) / (1000 * 60 * 60 * 24))
-    }));
+    const exportData = pendingForms.map(f => {
+      const vSr = f.voterSrNo || f.formNumber;
+      const matchedVoter = voters.find(v => v.srNo === vSr);
+      return {
+        'Recipient Name (नाव)': f.recipientName,
+        'Mobile Number (मोबाईल)': f.recipientMobile,
+        'Form Number (फॉर्म क्र)': f.formNumber,
+        'Linked Voter SrNo (मतदार अनुक्रमांक)': matchedVoter ? matchedVoter.srNo : 'N/A',
+        'Linked Voter Name (मतदाराचे नाव)': matchedVoter ? matchedVoter.name : 'N/A',
+        'Days Since Distribution (वाटपापासून दिवस)': Math.floor((Date.now() - new Date(f.distributedAt).getTime()) / (1000 * 60 * 60 * 24))
+      };
+    });
     exportToCSV(exportData, 'BLO_SIR_Pending_Call_List');
   };
 
   const downloadVoterStatusCSV = () => {
     const exportData = voters.map(v => {
-      const linkedForm = forms.find(f => f.voterSrNo === v.srNo);
+      const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
       return {
         'Sr No (यादी अनुक्रमांक)': v.srNo,
         'Voter Name (मतदाराचे नाव)': v.name,
@@ -1658,7 +1671,7 @@ export default function App() {
         'Age (वय)': v.age || '',
         'Gender (लिंग)': v.gender,
         'House No (घर क्र)': v.houseNo,
-        'SIR Form Linked (लिंक केलेला फॉर्म)': v.linkedFormNo || 'N/A',
+        'SIR Form Linked (लिंक केलेला फॉर्म)': linkedForm ? linkedForm.formNumber : 'N/A',
         'Form Status (फॉर्म स्थिती)': linkedForm ? (linkedForm.status === 'Collected' ? 'Collected (जमा)' : 'Distributed (वाटप)') : 'Not Distributed (वाटप नाही)'
       };
     });
@@ -2126,14 +2139,21 @@ export default function App() {
                             <div className="text-xs text-slate-500">{f.recipientMobile}</div>
                           </td>
                           <td className="py-3.5 px-3">
-                            {f.voterName ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">Sr.{f.voterSrNo}</span>
-                                <span className="text-slate-700 font-medium truncate max-w-[150px]">{f.voterName}</span>
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 text-xs italic">{lang === 'mr' ? "लिंक नाही" : "Not Linked"}</span>
-                            )}
+                            {(() => {
+                              const vSr = f.voterSrNo || f.formNumber;
+                              const matchedVoter = voters.find(v => v.srNo === vSr);
+                              if (matchedVoter) {
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">Sr.{matchedVoter.srNo}</span>
+                                    <span className="text-slate-700 font-medium truncate max-w-[150px]">{matchedVoter.name}</span>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <span className="text-slate-400 text-xs italic">{lang === 'mr' ? "लिंक नाही" : "Not Linked"}</span>
+                              );
+                            })()}
                           </td>
                           <td className="py-3.5 px-3">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
@@ -2997,14 +3017,21 @@ export default function App() {
                             )}
                           </td>
                           <td className="py-4 px-4">
-                            {f.voterName ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 rounded">Sr.{f.voterSrNo}</span>
-                                <span className="text-slate-800 font-semibold">{f.voterName}</span>
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 text-xs italic">{lang === 'mr' ? "लिंक नाही" : "Not Linked"}</span>
-                            )}
+                            {(() => {
+                              const vSr = f.voterSrNo || f.formNumber;
+                              const matchedVoter = voters.find(v => v.srNo === vSr);
+                              if (matchedVoter) {
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 rounded">Sr.{matchedVoter.srNo}</span>
+                                    <span className="text-slate-800 font-semibold">{matchedVoter.name}</span>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <span className="text-slate-400 text-xs italic">{lang === 'mr' ? "लिंक नाही" : "Not Linked"}</span>
+                              );
+                            })()}
                           </td>
                           <td className="py-4 px-4">
                             <div className="flex flex-col gap-1">
@@ -3221,7 +3248,7 @@ export default function App() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {group.members.map(v => {
-                            const linkedForm = forms.find(f => f.voterSrNo === v.srNo);
+                            const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
 
                             return (
                               <tr key={v.srNo} className="hover:bg-slate-50/20 transition-colors">
@@ -3247,7 +3274,7 @@ export default function App() {
                                 </td>
                                 <td className="py-3 px-4">
                                   {linkedForm ? (
-                                    <div className="flex flex-col gap-0.5">
+                                    <div className="flex flex-col gap-1">
                                       <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold w-max border ${
                                         linkedForm.status === 'Collected' 
                                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
@@ -3255,9 +3282,11 @@ export default function App() {
                                       }`}>
                                         {linkedForm.status === 'Collected' ? t.collected[lang] : t.distributed[lang]}
                                       </span>
-                                      <span className="text-[10px] text-slate-500 font-mono font-bold">
-                                        {t.formNo[lang]} {linkedForm.formNumber}
-                                      </span>
+                                      <div className="text-[11px] text-slate-800 font-semibold leading-tight">
+                                        <span className="text-[10px] text-slate-400 block">{t.formNo[lang]} <strong className="font-extrabold text-slate-700">{linkedForm.formNumber}</strong></span>
+                                        <span className="block mt-0.5 text-slate-700">{lang === 'mr' ? "कोणी घेतले: " : "Taken by: "}<span className="text-amber-800 font-bold">{linkedForm.recipientName}</span></span>
+                                        <span className="block text-[10px] text-slate-500 font-mono">{linkedForm.recipientMobile}</span>
+                                      </div>
                                     </div>
                                   ) : (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-50 text-slate-400 border border-slate-200">
@@ -3332,7 +3361,7 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredVoters.map(v => {
-                        const linkedForm = forms.find(f => f.voterSrNo === v.srNo);
+                        const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
 
                         return (
                           <tr key={v.srNo} className="hover:bg-slate-50/50 transition-colors">
@@ -3368,16 +3397,18 @@ export default function App() {
                             <td className="py-3.5 px-4">
                               {linkedForm ? (
                                 <div className="flex flex-col gap-1">
-                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold w-max border ${
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold w-max border ${
                                     linkedForm.status === 'Collected' 
                                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
                                       : 'bg-amber-50 text-amber-700 border-amber-200'
                                   }`}>
                                     {linkedForm.status === 'Collected' ? t.collected[lang] : t.distributed[lang]}
                                   </span>
-                                  <span className="text-[10px] text-slate-500 font-mono font-bold">
-                                    {t.formNo[lang]} {linkedForm.formNumber}
-                                  </span>
+                                  <div className="text-[11px] text-slate-800 font-semibold leading-tight">
+                                    <span className="text-[10px] text-slate-400 block">{t.formNo[lang]} <strong className="font-extrabold text-slate-700">{linkedForm.formNumber}</strong></span>
+                                    <span className="block mt-0.5 text-slate-700">{lang === 'mr' ? "कोणी घेतले: " : "Taken by: "}<span className="text-amber-800 font-bold">{linkedForm.recipientName}</span></span>
+                                    <span className="block text-[10px] text-slate-500 font-mono">{linkedForm.recipientMobile}</span>
+                                  </div>
                                 </div>
                               ) : (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-slate-50 text-slate-400 border border-slate-200">
