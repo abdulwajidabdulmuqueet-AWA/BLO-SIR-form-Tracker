@@ -728,50 +728,38 @@ export default function App() {
 
     let currentVoter: Partial<Voter> = {};
 
-    const isSrNoLine = (line: string): boolean => {
-      const clean = marathiToEnglishDigits(line).trim();
-      return /^\d{1,4}$/.test(clean);
+    const getSrNoFromLine = (line: string): string | null => {
+      const normalizedLine = marathiToEnglishDigits(line).replace(/[•\t]/g, '').trim();
+      
+      // Match "Sr. No. 1" or "Sr No 1" or "Sr. No. 8 (B)" or "Sr. No. 9 (Data me missing...)"
+      const srNoMatch = normalizedLine.match(/(?:Sr\.?\s*No\.?|Serial|S\.?N\.?|अनुक्रमांक|अनुक्र|अनु\.?)\s*[:：\-‐\.]?\s*(\d+(?:\s*\(?[A-Za-z]\)?)?)/i);
+      if (srNoMatch) {
+        return srNoMatch[1];
+      }
+      
+      // Also check if the line is just a simple number line like "1" or "01" or "1." or "1)" or "• 1"
+      const cleanLine = normalizedLine.replace(/^[\s\-‐\.\*\•\)]+/, '').replace(/[\s\-‐\.\*\•\)]+$/, '').trim();
+      if (/^\d{1,4}$/.test(cleanLine)) {
+        return cleanLine;
+      }
+      
+      return null;
     };
 
-    const nameRegex = /(?:नाव|नाम|Name|Voter Name)\s*[:：\-‐]\s*(.+)/i;
-    const ageRegex = /(?:वय|Age)\s*[:：\-‐]\s*(\d+|[०-९]+)/i;
-    const genderRegex = /(?:लिंग|Gender|Sex)\s*[:：\-‐]\s*(पुरुष|स्त्री|महिला|Male|Female|Other|इतर)/i;
-    const houseNoRegex = /(?:घर|घर क्रमांक|घर क्र|House|House No|H\.No|H No)\s*[:：\-‐]\s*([^\s,]+)/i;
-    const epicRegex = /(?:ओळखपत्र|ओळखपत्र क्र|इपिक|EPIC|Card|ID)\s*[:：\-‐]\s*([A-Z0-9/\-]+)/i;
-    const generalEpicRegex = /\b([A-Z]{3}\d{7}|[A-Z]{2}\/\d{2}\/\d{3}\/\d{6,7}|[A-Z]{3}[0-9]{6,7})\b/i;
+    const isGuardianLine = (line: string): boolean => {
+      return /(?:Shohar|Walid|Waleda|Father|Mother|Husband|Patni|Pati|Wife|Son|Daughter|spouse|parent|guardian|पत्नी|पती|वडील|आई|नाते|पालक)/i.test(line);
+    };
 
     for (let i = 0; i < cleanLines.length; i++) {
       const line = cleanLines[i];
-      const srNoMatch = line.match(/(?:अनुक्रमांक|अनुक्र|Sr No|Sr\. No|Serial)\s*[:：\-‐]?\s*(\d+|[०-९]+)/i);
+      const foundSrNo = getSrNoFromLine(line);
 
-      if (srNoMatch) {
-        if (currentVoter.name) {
+      if (foundSrNo) {
+        if (currentVoter.name && currentVoter.name.trim() !== '') {
           votersList.push(currentVoter as Voter);
         }
-        const englishSrNo = marathiToEnglishDigits(srNoMatch[1]);
         currentVoter = {
-          srNo: englishSrNo,
-          name: '',
-          epic: '',
-          age: null,
-          gender: 'Male',
-          houseNo: ''
-        };
-        continue;
-      } else if (isSrNoLine(line) && Object.keys(currentVoter).length === 0) {
-        currentVoter = {
-          srNo: marathiToEnglishDigits(line),
-          name: '',
-          epic: '',
-          age: null,
-          gender: 'Male',
-          houseNo: ''
-        };
-        continue;
-      } else if (isSrNoLine(line) && currentVoter.name && currentVoter.name.trim() !== '') {
-        votersList.push(currentVoter as Voter);
-        currentVoter = {
-          srNo: marathiToEnglishDigits(line),
+          srNo: foundSrNo,
           name: '',
           epic: '',
           age: null,
@@ -781,18 +769,35 @@ export default function App() {
         continue;
       }
 
-      const nameM = line.match(nameRegex);
-      if (nameM) {
-        currentVoter.name = nameM[1].trim();
-        continue;
+      // Ensure we have a currentVoter started
+      if (Object.keys(currentVoter).length === 0) {
+        currentVoter = {
+          srNo: String(votersList.length + 1),
+          name: '',
+          epic: '',
+          age: null,
+          gender: 'Male',
+          houseNo: ''
+        };
       }
 
-      const ageM = line.match(ageRegex);
+      // 1. Name parsing (Naam / Name / नाव / नाम / मतदाराचे नाव)
+      if (/(?:Naam|Name|नाव|नाम|मतदाराचे\s*नाव)/i.test(line) && !isGuardianLine(line)) {
+        const nameM = line.match(/(?:Naam|Name|नाव|नाम|मतदाराचे\s*नाव)\s*[:：\-‐.]?\s*(.+)/i);
+        if (nameM) {
+          currentVoter.name = nameM[1].replace(/[•\t]/g, '').trim();
+          continue;
+        }
+      }
+
+      // 2. Age parsing (Umar / Age / वय)
+      const ageM = line.match(/(?:Umar|Age|वय)\s*[:：\-‐.]?\s*(\d+|[०-९]+)/i);
       if (ageM) {
         currentVoter.age = parseInt(marathiToEnglishDigits(ageM[1]), 10);
       }
 
-      const genderM = line.match(genderRegex);
+      // 3. Gender parsing (Jins / Gender / Sex / लिंग)
+      const genderM = line.match(/(?:Jins|Gender|Sex|लिंग)\s*(?:\([^)]+\))?\s*[:：\-‐.]?\s*(पुरुष|स्त्री|महिला|Male|Female|Other|इतर)/i);
       if (genderM) {
         const genStr = genderM[1].trim().toLowerCase();
         if (genStr.includes('female') || genStr.includes('स्त्री') || genStr.includes('महिला')) {
@@ -804,30 +809,35 @@ export default function App() {
         }
       }
 
-      const houseNoM = line.match(houseNoRegex);
+      // 4. House Number / Makaan Number / Ghar Number / House No
+      const houseNoM = line.match(/(?:Makaan\s*Number|Makaan|Ghar|Ghar\s*no|House|House\s*No|घर क्रमांक|घर क्र|घर)\s*[:：\-‐.]?\s*(.+)/i);
       if (houseNoM) {
         currentVoter.houseNo = houseNoM[1].trim();
       }
 
-      const epicM = line.match(epicRegex);
+      // 5. Voter ID / EPIC / ID / Card
+      const epicM = line.match(/(?:Voter\s*ID|EPIC|ओळखपत्र|इपिक|Card|ID)\s*(?:\([^)]+\))?\s*[:：\-‐.]?\s*([A-Z0-9/\-]+)/i);
       if (epicM) {
         currentVoter.epic = epicM[1].trim().toUpperCase();
       } else {
+        const generalEpicRegex = /\b([A-Z]{3}\d{7}|[A-Z]{2}\/\d{2}\/\d{3}\/\d{6,7}|[A-Z]{3}[0-9]{6,7})\b/i;
         const generalEpicM = line.match(generalEpicRegex);
         if (generalEpicM && !currentVoter.epic) {
           currentVoter.epic = generalEpicM[1].toUpperCase();
         }
       }
 
-      if (currentVoter.srNo && !currentVoter.name && !line.includes(':') && !line.includes('：') && line.length > 2) {
-        const isMetadataLine = /(?:वय|Age|Gender|Sex|लिंग|घर|House|EPIC|ओळखपत्र|यादी|भाग|Page|निवडणूक)/i.test(line);
+      // 6. Generic Fallback for Name:
+      // If we have a SrNo but NO name yet, and this line doesn't have colons, or any other keys, treat it as the name
+      if (currentVoter.srNo && (!currentVoter.name || currentVoter.name.trim() === '') && !line.includes(':') && !line.includes('：') && line.length > 2) {
+        const isMetadataLine = /(?:वय|Age|Gender|Sex|लिंग|Umar|Jins|घर|House|Makaan|EPIC|ओळखपत्र|यादी|भाग|Page|निवडणूक)/i.test(line);
         if (!isMetadataLine) {
-          currentVoter.name = line.trim();
+          currentVoter.name = line.replace(/[•\t]/g, '').trim();
         }
       }
     }
 
-    if (currentVoter.name) {
+    if (currentVoter.name && currentVoter.name.trim() !== '') {
       votersList.push(currentVoter as Voter);
     }
 
