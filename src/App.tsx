@@ -149,6 +149,10 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'Distributed' | 'Collected'>('all');
   const [formSortOrder, setFormSortOrder] = useState<'form-asc' | 'form-desc' | 'date-desc' | 'date-asc'>('form-asc');
 
+  // Bulk matching states
+  const [bulkMatchInput, setBulkMatchInput] = useState('');
+  const [showBulkMatcher, setShowBulkMatcher] = useState(false);
+
   // OCR Upload states
   const [ocrText, setOcrText] = useState('');
   const [isParsingOcr, setIsParsingOcr] = useState(false);
@@ -372,15 +376,58 @@ export default function App() {
     ).slice(0, 3);
   }, [voters, recipientName]);
 
+  const convertToEnglishDigits = (str: string): string => {
+    const marDigits = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+    return str.split('').map(char => {
+      const idx = marDigits.indexOf(char);
+      return idx !== -1 ? String(idx) : char;
+    }).join('');
+  };
+
   // Filters and searches forms for Collection Tab
   const filteredForms = useMemo(() => {
+    const cleanQuery = convertToEnglishDigits(searchQuery.trim());
+    
+    // Check if the query is a space or comma separated list of numbers or contains ranges
+    const isMultiNumeric = /^[0-9\s,，;:\-]+$/.test(cleanQuery) && 
+      (cleanQuery.includes(' ') || cleanQuery.includes(',') || cleanQuery.includes(';') || cleanQuery.includes('，'));
+    
+    let targetFormNumbers: string[] = [];
+    if (isMultiNumeric) {
+      const parts = cleanQuery.split(/[\s,，;]+/);
+      parts.forEach(part => {
+        const rangeMatch = part.match(/^(\d+)\s*[-–—toते]\s*(\d+)$/i);
+        if (rangeMatch) {
+          const start = parseInt(rangeMatch[1], 10);
+          const end = parseInt(rangeMatch[2], 10);
+          const min = Math.min(start, end);
+          const max = Math.max(start, end);
+          if (max - min < 100) {
+            for (let i = min; i <= max; i++) {
+              targetFormNumbers.push(String(i));
+            }
+          }
+        } else {
+          const cleanPart = part.replace(/\D/g, '');
+          if (cleanPart) {
+            targetFormNumbers.push(cleanPart);
+          }
+        }
+      });
+    }
+
     const filtered = forms.filter(f => {
-      const matchesSearch = 
-        f.formNumber.includes(searchQuery) ||
-        f.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.recipientMobile.includes(searchQuery) ||
-        (f.voterName && f.voterName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (f.voterSrNo && f.voterSrNo.includes(searchQuery));
+      let matchesSearch = false;
+      if (targetFormNumbers.length > 0) {
+        matchesSearch = targetFormNumbers.includes(f.formNumber);
+      } else {
+        matchesSearch = 
+          f.formNumber.includes(searchQuery) ||
+          f.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          f.recipientMobile.includes(searchQuery) ||
+          (f.voterName && f.voterName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+          (f.voterSrNo && f.voterSrNo.includes(searchQuery));
+      }
 
       const matchesStatus = 
         statusFilter === 'all' ? true : f.status === statusFilter;
@@ -402,6 +449,59 @@ export default function App() {
       return 0;
     });
   }, [forms, searchQuery, statusFilter, formSortOrder]);
+
+  // Bulk matching logic to cross reference list of forms with voter list and form records
+  const bulkMatchResults = useMemo(() => {
+    if (!bulkMatchInput.trim()) return [];
+    
+    const cleanInput = convertToEnglishDigits(bulkMatchInput.trim());
+    const parts = cleanInput.split(/[\s,，;|\n]+/);
+    const enteredFormNumbers: string[] = [];
+    
+    parts.forEach(part => {
+      const rangeMatch = part.match(/^(\d+)\s*[-–—toते]\s*(\d+)$/i);
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10);
+        const end = parseInt(rangeMatch[2], 10);
+        const min = Math.min(start, end);
+        const max = Math.max(start, end);
+        if (max - min < 200) {
+          for (let i = min; i <= max; i++) {
+            enteredFormNumbers.push(String(i));
+          }
+        }
+      } else {
+        const cleanVal = part.replace(/\D/g, '').trim();
+        if (cleanVal && !enteredFormNumbers.includes(cleanVal)) {
+          enteredFormNumbers.push(cleanVal);
+        }
+      }
+    });
+
+    return enteredFormNumbers.map(formNum => {
+      const formRecord = forms.find(f => f.formNumber === formNum);
+      
+      // Match voter in voter list:
+      // 1. By voter's linkedFormNo field
+      let matchedVoter = voters.find(v => {
+        if (!v.linkedFormNo) return false;
+        const list = v.linkedFormNo.split(',').map(s => s.trim());
+        return list.includes(formNum);
+      });
+      
+      // 2. Fallback: by formRecord's voterSrNo
+      if (!matchedVoter && formRecord && formRecord.voterSrNo) {
+        matchedVoter = voters.find(v => v.srNo === formRecord.voterSrNo);
+      }
+
+      return {
+        formNumber: formNum,
+        formRecord,
+        matchedVoter,
+        status: formRecord ? formRecord.status : 'Not Distributed'
+      };
+    });
+  }, [bulkMatchInput, forms, voters]);
 
   // Filters and searches voters for Voter Tab
   const filteredVoters = useMemo(() => {
@@ -2600,6 +2700,168 @@ export default function App() {
         {activeTab === 'collection' && (
           <div id="tab-collection-view" className="space-y-6">
             
+            {/* Collapsible Bulk Form Matcher Card */}
+            <div className="bg-slate-900 text-white rounded-2xl p-5 border border-white/10 shadow-lg space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-amber-300" />
+                  <h3 className="font-extrabold text-base md:text-lg">
+                    {lang === 'mr' ? "फॉर्म क्रमांक आणि मतदार यादी जुळवणी केंद्र" : "Bulk Form & Voter List Matcher"}
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => setShowBulkMatcher(!showBulkMatcher)}
+                  className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-amber-200"
+                >
+                  {showBulkMatcher ? (lang === 'mr' ? "बंद करा" : "Close") : (lang === 'mr' ? "जुळवा / मॅच करा" : "Open Matcher")}
+                </button>
+              </div>
+
+              {!showBulkMatcher ? (
+                <p className="text-xs text-amber-100/70 font-medium leading-relaxed">
+                  {lang === 'mr' 
+                    ? "💡 व्हॉट्सअँप किंवा मेसेजमधून अनेक फॉर्म नंबर कॉपी करून येथे पेस्ट करा. मतदार यादीमधील फॉर्म नंबर आणि संकलित डेटाची आपोआप तुलना करा." 
+                    : "💡 Paste multiple form numbers copied from messages or files. Instantly match them with the voter list and track distribution status."}
+                </p>
+              ) : (
+                <div className="space-y-4 border-t border-white/10 pt-4">
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-amber-200">
+                      {lang === 'mr' ? "पडताळणीसाठी फॉर्म नंबर टाका (स्वल्पविराम, स्पेस किंवा नवीन ओळ):" : "Enter form numbers for matching (separated by comma, space or newline):"}
+                    </label>
+                    <textarea 
+                      value={bulkMatchInput}
+                      onChange={(e) => setBulkMatchInput(e.target.value)}
+                      placeholder={lang === 'mr' ? "उदा. ४५०१, ४५०२, ४५०३-४५०५" : "e.g. 4501, 4502, 4503-4505"}
+                      rows={3}
+                      className="w-full bg-slate-950/80 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all font-mono text-white placeholder-slate-500"
+                    />
+                  </div>
+
+                  {bulkMatchResults.length > 0 && (
+                    <div className="space-y-3 bg-slate-950/50 border border-white/5 rounded-2xl p-4 overflow-hidden">
+                      <h4 className="font-bold text-amber-200 text-xs uppercase tracking-wider flex justify-between items-center">
+                        <span>{lang === 'mr' ? `जुळवणी निकाल (एकूण ${bulkMatchResults.length} फॉर्म)` : `Matching Results (${bulkMatchResults.length} forms)`}</span>
+                        <button 
+                          onClick={() => setBulkMatchInput('')}
+                          className="text-rose-400 hover:text-rose-300 text-[10px] font-extrabold cursor-pointer"
+                        >
+                          {lang === 'mr' ? "स्वच्छ करा" : "Clear Input"}
+                        </button>
+                      </h4>
+
+                      <div className="overflow-x-auto rounded-xl border border-white/10">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-white/5 border-b border-white/10 font-bold text-amber-100">
+                              <th className="py-2 px-3 w-24">{lang === 'mr' ? "फॉर्म क्र." : "Form No."}</th>
+                              <th className="py-2 px-3">{lang === 'mr' ? "मतदार यादी मॅच" : "Voter List Match"}</th>
+                              <th className="py-2 px-3">{lang === 'mr' ? "वाटप स्वीकारणारा" : "Distribution Recipient"}</th>
+                              <th className="py-2 px-3">{lang === 'mr' ? "स्थिती" : "Status"}</th>
+                              <th className="py-2 px-3 text-right">{lang === 'mr' ? "जलद कृती" : "Quick Action"}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 text-slate-200 font-medium">
+                            {bulkMatchResults.map(res => (
+                              <tr key={res.formNumber} className="hover:bg-white/5 transition-colors">
+                                <td className="py-2.5 px-3 font-mono font-extrabold text-amber-300">
+                                  {res.formNumber}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {res.matchedVoter ? (
+                                    <div className="flex flex-col">
+                                      <span className="font-bold text-white flex items-center gap-1.5">
+                                        <span className="bg-amber-400/20 text-amber-300 text-[10px] px-1 py-0.2 rounded font-extrabold">Sr.{res.matchedVoter.srNo}</span>
+                                        {res.matchedVoter.name}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                        {lang === 'mr' ? `घर क्र: ${res.matchedVoter.houseNo || '—'}` : `House No: ${res.matchedVoter.houseNo || '—'}`} • EPIC: {res.matchedVoter.epic || '—'}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-500 italic text-[11px]">
+                                      {lang === 'mr' ? "यादीत मॅच सापडली नाही" : "No match in Voter List"}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {res.formRecord ? (
+                                    <div className="flex flex-col">
+                                      <span className="text-white font-bold">{res.formRecord.recipientName}</span>
+                                      <span className="text-[10px] text-slate-400 font-mono">{res.formRecord.recipientMobile}</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-500 italic text-[11px]">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    res.status === 'Collected' 
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                                      : res.status === 'Distributed'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                      : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  }`}>
+                                    {res.status === 'Collected' 
+                                      ? (lang === 'mr' ? "जमा (Collected)" : "Collected") 
+                                      : res.status === 'Distributed'
+                                      ? (lang === 'mr' ? "प्रलंबित (Pending)" : "Pending (Distributed)")
+                                      : (lang === 'mr' ? "वाटप नाही (Unregistered)" : "Not Distributed")}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  {res.status === 'Distributed' && res.formRecord && (
+                                    <button
+                                      onClick={() => toggleFormStatus(res.formRecord!.id)}
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2.5 py-1 rounded-lg text-[10px] transition-colors cursor-pointer"
+                                    >
+                                      {lang === 'mr' ? "जमा करा" : "Collect"}
+                                    </button>
+                                  )}
+                                  {res.status === 'Collected' && res.formRecord && (
+                                    <button
+                                      onClick={() => toggleFormStatus(res.formRecord!.id)}
+                                      className="bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-lg text-[10px] transition-colors cursor-pointer"
+                                    >
+                                      {lang === 'mr' ? "रिव्हर्ट" : "Revert"}
+                                    </button>
+                                  )}
+                                  {res.status === 'Not Distributed' && (
+                                    <button
+                                      onClick={() => {
+                                        if (res.matchedVoter) {
+                                          setRecipientName(res.matchedVoter.name);
+                                          setSelectedVoterSrNo(res.matchedVoter.srNo);
+                                        } else {
+                                          setRecipientName('');
+                                          setSelectedVoterSrNo('');
+                                        }
+                                        setSelectedFormNumbers([res.formNumber]);
+                                        setActiveTab('distribution');
+                                        showToast(
+                                          lang === 'mr' 
+                                            ? `फॉर्म क्रमांक ${res.formNumber} वितरणासाठी भरला गेला!` 
+                                            : `Form number ${res.formNumber} pre-populated for distribution!`, 
+                                          'info'
+                                        );
+                                      }}
+                                      className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-2.5 py-1 rounded-lg text-[10px] transition-colors cursor-pointer"
+                                    >
+                                      {lang === 'mr' ? "वाटप करा" : "Distribute"}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Filter and Search Bar */}
             <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
               
