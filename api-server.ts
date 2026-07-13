@@ -1,6 +1,7 @@
 import express from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import mammoth from 'mammoth';
 
 dotenv.config();
 
@@ -35,16 +36,59 @@ router.post('/parse-yaadi', async (req, res) => {
       const cleanBase64 = fileBase64.replace(/^data:.*?;base64,/, '');
       console.log(`Cleaned base64 length: ${cleanBase64.length}`);
       
-      contents = {
-        parts: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: mimeType
-            }
-          },
-          {
-            text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
+      const isWordDoc = mimeType.includes('word') || 
+                        mimeType.includes('officedocument') || 
+                        mimeType.includes('msword') || 
+                        mimeType === 'docx' || 
+                        mimeType === 'doc';
+
+      if (isWordDoc) {
+        console.log("Extracting text from Word (.docx/.doc) file using mammoth...");
+        try {
+          const buffer = Buffer.from(cleanBase64, 'base64');
+          const result = await mammoth.extractRawText({ buffer });
+          const extractedText = result.value;
+          console.log(`Successfully extracted ${extractedText.length} characters of text from Word file.`);
+
+          contents = {
+            parts: [
+              {
+                text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
+Parse the following text extracted from a Word (.docx/.doc) document (which may contain mixed Marathi, English, or OCR typos) into a structured JSON array of voter objects.
+
+Strict Output Rules:
+1. Translate Marathi genders ("पुरुष" -> "Male", "स्त्री" or "महिला" -> "Female", otherwise "Other") to English.
+2. Clean up names and remove trailing/leading special characters.
+3. Extract age as an integer.
+4. Extract the serial number ("srNo" / अनुक्रमांक) as a clean string representing the number (e.g., "1", "12").
+5. Extract the EPIC Card Number (voter card ID like XYZ1234567, MH/12/...). If missing or unreadable, return empty string "".
+6. Extract the House Number ("houseNo" / घर क्रमांक). If missing, return empty string "".
+7. Maintain the relative order of voters as they appear in the text.
+
+Extracted Text to Parse:
+"""
+${extractedText}
+"""
+
+Return ONLY a valid JSON array conforming to this schema. Do not include any markdown formatting, no preamble, and no explanation.`
+              }
+            ]
+          };
+        } catch (docxError: any) {
+          console.error("Mammoth DOCX parsing failed:", docxError);
+          return res.status(400).json({ error: `Failed to read Word document: ${docxError.message || docxError}` });
+        }
+      } else {
+        contents = {
+          parts: [
+            {
+              inlineData: {
+                data: cleanBase64,
+                mimeType: mimeType
+              }
+            },
+            {
+              text: `You are an expert electoral data processor for Maharashtra Voter Lists (Yaadi).
 Parse the attached file containing a voter list into a structured JSON array of voter objects.
 
 Strict Output Rules:
@@ -57,9 +101,10 @@ Strict Output Rules:
 7. Maintain the relative order of voters as they appear in the document.
 
 Return ONLY a valid JSON array conforming to this schema. Do not include any markdown formatting, no preamble, and no explanation.`
-          }
-        ]
-      };
+            }
+          ]
+        };
+      }
     } else {
       console.log(`Processing plain text OCR payload: text length=${ocrText.length}`);
       contents = {

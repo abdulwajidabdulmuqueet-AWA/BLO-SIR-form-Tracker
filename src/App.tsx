@@ -316,7 +316,7 @@ export default function App() {
     noRecords: { mr: "कोणतेही रेकॉर्ड सापडले नाहीत.", en: "No records found." },
 
     // Voter List
-    importOcrBtn: { mr: "२०२४ मतदार यादी OCR डेटा आयात (AI)", en: "Import 2024 Yaadi OCR Data (AI)" },
+    importOcrBtn: { mr: "वर्ड फाईल किंवा पीडीएफ अपलोड करा (AI)", en: "Upload by Word File or PDF (AI)" },
     addVoterBtn: { mr: "नवीन मतदार जोडा", en: "Add Manual Voter" },
     voterSearchPlaceholder: { mr: "नाव, अनुक्रमांक किंवा EPIC कार्डने शोधा...", en: "Search voters by Name, Sr No, or EPIC..." },
     srNoCol: { mr: "अनुक्रमांक (Sr No)", en: "Sr No" },
@@ -328,9 +328,9 @@ export default function App() {
     notDistributed: { mr: "वाटप नाही", en: "Not Distributed" },
     
     // OCR Modal
-    ocrTitle: { mr: "AI मतदार यादी OCR कनवर्टर", en: "AI Voter List OCR Converter" },
-    ocrDescription: { mr: "तुमच्याकडे असलेली मतदार यादी (PDF/Image) मधील ओसीआर (OCR) केलेला मजकूर येथे पेस्ट करा. आमचे AI मॉडेल (Gemini) या मसुद्यामधील मतदार, त्यांचे अनुक्रमांक, घर क्रमांक, वय आणि ओळखपत्र क्रमांक स्वयंचलितपणे ओळखून डेटाबेस तयार करेल.", en: "Paste your OCR text from the 2024 voter list PDF here. Our AI (Gemini) will automatically extract voter Sr No, name, age, gender, EPIC card, and house number to build your database instantly." },
-    ocrTextareaPlaceholder: { mr: "येथे ओसीआर केलेला मजकूर पेस्ट करा...\nउदा.\nअनुक्रमांक: २५६\nनाव: पाटील सचिन सुखदेव\nघर क्रमांक: १४३\nवय: ४२ लिंग: पुरुष\nओळखपत्र क्र.: XYZ0123456", en: "Paste OCRed text here...\ne.g.\nSerial No: 256\nName: Patil Sachin Sukhdev\nHouse No: 143\nAge: 42 Gender: Male\nEPIC No: XYZ0123456" },
+    ocrTitle: { mr: "AI वर्ड फाईल / पीडीएफ मतदार यादी आयात", en: "AI Word File / PDF Voter List Import" },
+    ocrDescription: { mr: "तुमच्याकडे असलेली मतदार यादी (Word Document/DOCX/PDF/Image) फाईल अपलोड करा किंवा मधील मजकूर येथे पेस्ट करा. आमचे AI मॉडेल (Gemini) या मसुद्यामधील मतदार, त्यांचे अनुक्रमांक, घर क्रमांक, वय आणि ओळखपत्र क्रमांक स्वयंचलितपणे ओळखून डेटाबेस तयार करेल.", en: "Upload your voter list Word file (.docx), PDF or image, or paste list text. Our AI (Gemini) will automatically extract voter Sr No, name, age, gender, EPIC card, and house number to build your database instantly." },
+    ocrTextareaPlaceholder: { mr: "येथे मतदार यादीचा मजकूर पेस्ट करा...\nउदा.\nअनुक्रमांक: २५६\nनाव: पाटील सचिन सुखदेव\nघर क्रमांक: १४३\nवय: ४२ लिंग: पुरुष\nओळखपत्र क्र.: XYZ0123456", en: "Paste voter list text here...\ne.g.\nSerial No: 256\nName: Patil Sachin Sukhdev\nHouse No: 143\nAge: 42 Gender: Male\nEPIC No: XYZ0123456" },
     ocrSubmit: { mr: "AI द्वारे मतदार यादी संकलित करा", en: "Process & Import with Gemini AI" },
     ocrProcessing: { mr: "AI डेटा वाचत आहे, कृपया काही सेकंद प्रतीक्षा करा...", en: "AI is analyzing and parsing voter records, please wait..." },
     ocrSuccessMsg: { mr: "मतदार यशस्वीरित्या यादीमध्ये जोडले गेले आहेत!", en: "Voters successfully added to your digital list!" },
@@ -2645,7 +2645,7 @@ export default function App() {
                   className="bg-slate-900 hover:bg-slate-850 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                 >
                   <Sparkles className="w-4 h-4 text-amber-300" />
-                  <span>{lang === 'mr' ? "OCR मतदार यादी अपलोड (AI)" : "Upload OCR Yaadi (AI)"}</span>
+                  <span>{lang === 'mr' ? "वर्ड फाईल / पीडीएफ अपलोड (AI)" : "Upload Word File / PDF (AI)"}</span>
                 </button>
               </div>
 
@@ -3130,7 +3130,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <h3 className="font-extrabold text-base md:text-lg">
-                  {lang === 'mr' ? "AI मतदार यादी डेटा आयात" : "AI Voter List Import"}
+                  {lang === 'mr' ? "AI वर्ड फाईल / पीडीएफ मतदार यादी आयात" : "AI Word File / PDF Voter List Import"}
                 </h3>
               </div>
               <button 
@@ -3154,7 +3154,7 @@ export default function App() {
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  📁 {lang === 'mr' ? "पीडीएफ / फोटो फाईल अपलोड" : "PDF / Image File Upload"}
+                  📁 {lang === 'mr' ? "वर्ड फाईल / पीडीएफ अपलोड" : "Word File / PDF Upload"}
                 </button>
                 <button
                   type="button"
@@ -3173,14 +3173,14 @@ export default function App() {
                 <div className="space-y-4">
                   <p className="text-xs text-slate-600 leading-relaxed bg-amber-50/50 p-4 rounded-xl border border-amber-200/50">
                     {lang === 'mr' 
-                      ? "निवडणूक आयोगाची मतदार यादी (Yaadi PDF) किंवा तिच्या पानाचा फोटो अपलोड करा. आमचे प्रगत AI मॉडेल मतदारांची माहिती स्वयंचलितपणे वाचून मुख्य यादीत अपडेट करेल." 
-                      : "Upload an official Voter List PDF or a photo of a voter list page. Gemini AI will automatically extract and structure all voter records into your dashboard."}
+                      ? "निवडणूक आयोगाची मतदार यादी वर्ड फाईल (.docx), पीडीएफ (PDF) किंवा तिच्या पानाचा फोटो अपलोड करा. आमचे प्रगत AI मॉडेल मतदारांची माहिती स्वयंचलितपणे वाचून मुख्य यादीत अपडेट करेल." 
+                      : "Upload an official Voter List Word document (.docx), PDF, or a photo of a voter list page. Gemini AI will automatically extract and structure all voter records into your dashboard."}
                   </p>
 
                   <div className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-2xl p-8 text-center transition-all bg-slate-50 hover:bg-amber-50/5 relative cursor-pointer group">
                     <input 
                       type="file" 
-                      accept="application/pdf,image/*" 
+                      accept="application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*" 
                       onChange={handleVoterFileChange}
                       className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
                       disabled={isParsingOcr}
@@ -3194,7 +3194,7 @@ export default function App() {
                           {voterFile ? voterFile.name : (lang === 'mr' ? "फाईल निवडा किंवा येथे ड्रॅग करा" : "Click to select or drag and drop file")}
                         </p>
                         <p className="text-[10px] text-slate-400 font-semibold">
-                          {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • PDF or Image` : (lang === 'mr' ? "मर्यादा: ५ MB पर्यंत (Yaadi PDF, PNG, JPG)" : "Accepts official PDF, PNG, or JPEG up to 5MB")}
+                          {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • ${voterFile.name.endsWith('.docx') || voterFile.name.endsWith('.doc') ? 'Word Document' : 'File'}` : (lang === 'mr' ? "मर्यादा: ५ MB पर्यंत (Yaadi Word, PDF, PNG, JPG)" : "Accepts official Word, PDF, PNG, or JPEG up to 5MB")}
                         </p>
                       </div>
                     </div>
