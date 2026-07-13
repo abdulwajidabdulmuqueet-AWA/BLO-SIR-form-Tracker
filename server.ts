@@ -1,31 +1,47 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import apiRouter from './api-server.js'; // Use .js extension for TS type stripping runtime compatibility if required, or import directly
+import apiRouter from './api-server';
 import dotenv from 'dotenv';
+import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const port = process.env.PORT || 3000;
+async function startServer() {
+  const app = express();
+  const port = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '10mb' }));
+  // Mount body parsers with generous limits BEFORE any other routes
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// API Router
-app.use('/api', apiRouter);
+  // API Router
+  app.use('/api', apiRouter);
 
-// Serve static assets in production
-const distPath = path.join(__dirname, 'dist');
-app.use(express.static(distPath));
+  if (process.env.NODE_ENV !== 'production') {
+    // Vite middleware for development
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    // Serve static assets in production
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
 
-// Fallback to SPA router
-app.get('*', (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
-});
+    // Fallback to SPA router
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 
-app.listen(port, () => {
-  console.log(`Production server running on port ${port}`);
-});
+  app.listen(Number(port), '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${port} in ${process.env.NODE_ENV || 'development'} mode`);
+  });
+}
+
+startServer();
