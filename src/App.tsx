@@ -180,6 +180,8 @@ export default function App() {
   const [voterFileError, setVoterFileError] = useState<string>('');
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
   const [ocrInputMode, setOcrInputMode] = useState<'text' | 'file'>('file');
+  const [parsedVotersPreview, setParsedVotersPreview] = useState<Voter[]>([]);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
 
   // Excel Bulk Distribution Import states
   const [distributionInputMode, setDistributionInputMode] = useState<'manual' | 'bulk'>('manual');
@@ -680,71 +682,300 @@ export default function App() {
     }
   };
 
-  // Call Gemini AI server-side endpoint to parse the OCR voter list
-  const handleParseOcr = async () => {
+  // Load external scripts (like mammoth or pdf.js) dynamically
+  const loadExternalScript = (url: string, globalVarName: string): Promise<any> => {
+    return new Promise((resolve) => {
+      if ((window as any)[globalVarName]) {
+        resolve((window as any)[globalVarName]);
+        return;
+      }
+      const existing = document.querySelector(`script[src="${url}"]`);
+      if (existing) {
+        const checkInterval = setInterval(() => {
+          if ((window as any)[globalVarName]) {
+            clearInterval(checkInterval);
+            resolve((window as any)[globalVarName]);
+          }
+        }, 100);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = () => {
+        resolve((window as any)[globalVarName]);
+      };
+      script.onerror = () => {
+        resolve(null);
+      };
+      document.head.appendChild(script);
+    });
+  };
+
+  // 100% Offline client-side regex voter list parser
+  const parseOfflineVoterText = (text: string): Voter[] => {
+    const votersList: Voter[] = [];
+    const lines = text.split(/\n/);
+    const cleanLines = lines.map(l => l.trim()).filter(l => l.length > 0);
+
+    const marathiToEnglishDigits = (marStr: string): string => {
+      const marDigits = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+      return marStr.split('').map(char => {
+        const idx = marDigits.indexOf(char);
+        return idx !== -1 ? String(idx) : char;
+      }).join('');
+    };
+
+    let currentVoter: Partial<Voter> = {};
+
+    const isSrNoLine = (line: string): boolean => {
+      const clean = marathiToEnglishDigits(line).trim();
+      return /^\d{1,4}$/.test(clean);
+    };
+
+    const nameRegex = /(?:नाव|नाम|Name|Voter Name)\s*[:：\-‐]\s*(.+)/i;
+    const ageRegex = /(?:वय|Age)\s*[:：\-‐]\s*(\d+|[०-९]+)/i;
+    const genderRegex = /(?:लिंग|Gender|Sex)\s*[:：\-‐]\s*(पुरुष|स्त्री|महिला|Male|Female|Other|इतर)/i;
+    const houseNoRegex = /(?:घर|घर क्रमांक|घर क्र|House|House No|H\.No|H No)\s*[:：\-‐]\s*([^\s,]+)/i;
+    const epicRegex = /(?:ओळखपत्र|ओळखपत्र क्र|इपिक|EPIC|Card|ID)\s*[:：\-‐]\s*([A-Z0-9/\-]+)/i;
+    const generalEpicRegex = /\b([A-Z]{3}\d{7}|[A-Z]{2}\/\d{2}\/\d{3}\/\d{6,7}|[A-Z]{3}[0-9]{6,7})\b/i;
+
+    for (let i = 0; i < cleanLines.length; i++) {
+      const line = cleanLines[i];
+      const srNoMatch = line.match(/(?:अनुक्रमांक|अनुक्र|Sr No|Sr\. No|Serial)\s*[:：\-‐]?\s*(\d+|[०-९]+)/i);
+
+      if (srNoMatch) {
+        if (currentVoter.name) {
+          votersList.push(currentVoter as Voter);
+        }
+        const englishSrNo = marathiToEnglishDigits(srNoMatch[1]);
+        currentVoter = {
+          srNo: englishSrNo,
+          name: '',
+          epic: '',
+          age: null,
+          gender: 'Male',
+          houseNo: ''
+        };
+        continue;
+      } else if (isSrNoLine(line) && Object.keys(currentVoter).length === 0) {
+        currentVoter = {
+          srNo: marathiToEnglishDigits(line),
+          name: '',
+          epic: '',
+          age: null,
+          gender: 'Male',
+          houseNo: ''
+        };
+        continue;
+      } else if (isSrNoLine(line) && currentVoter.name && currentVoter.name.trim() !== '') {
+        votersList.push(currentVoter as Voter);
+        currentVoter = {
+          srNo: marathiToEnglishDigits(line),
+          name: '',
+          epic: '',
+          age: null,
+          gender: 'Male',
+          houseNo: ''
+        };
+        continue;
+      }
+
+      const nameM = line.match(nameRegex);
+      if (nameM) {
+        currentVoter.name = nameM[1].trim();
+        continue;
+      }
+
+      const ageM = line.match(ageRegex);
+      if (ageM) {
+        currentVoter.age = parseInt(marathiToEnglishDigits(ageM[1]), 10);
+      }
+
+      const genderM = line.match(genderRegex);
+      if (genderM) {
+        const genStr = genderM[1].trim().toLowerCase();
+        if (genStr.includes('female') || genStr.includes('स्त्री') || genStr.includes('महिला')) {
+          currentVoter.gender = 'Female';
+        } else if (genStr.includes('other') || genStr.includes('इतर')) {
+          currentVoter.gender = 'Other';
+        } else {
+          currentVoter.gender = 'Male';
+        }
+      }
+
+      const houseNoM = line.match(houseNoRegex);
+      if (houseNoM) {
+        currentVoter.houseNo = houseNoM[1].trim();
+      }
+
+      const epicM = line.match(epicRegex);
+      if (epicM) {
+        currentVoter.epic = epicM[1].trim().toUpperCase();
+      } else {
+        const generalEpicM = line.match(generalEpicRegex);
+        if (generalEpicM && !currentVoter.epic) {
+          currentVoter.epic = generalEpicM[1].toUpperCase();
+        }
+      }
+
+      if (currentVoter.srNo && !currentVoter.name && !line.includes(':') && !line.includes('：') && line.length > 2) {
+        const isMetadataLine = /(?:वय|Age|Gender|Sex|लिंग|घर|House|EPIC|ओळखपत्र|यादी|भाग|Page|निवडणूक)/i.test(line);
+        if (!isMetadataLine) {
+          currentVoter.name = line.trim();
+        }
+      }
+    }
+
+    if (currentVoter.name) {
+      votersList.push(currentVoter as Voter);
+    }
+
+    return votersList;
+  };
+
+  // Offline client-side parsing coordinator
+  const handleOfflineFileParse = async (file: File) => {
+    setIsParsingOcr(true);
+    setVoterFileError('');
+    setParsedVotersPreview([]);
+
+    try {
+      const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv');
+      if (isExcel) {
+        const parsed = await parseExcelVoterList(file);
+        setParsedVotersPreview(parsed);
+        setIsParsingOcr(false);
+        return;
+      }
+
+      const isPdf = file.name.endsWith('.pdf');
+      if (isPdf) {
+        const pdfjsLib = await loadExternalScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js', 'pdfjsLib');
+        if (!pdfjsLib) {
+          throw new Error(lang === 'mr' ? 'PDF वाचक लोड करू शकलो नाही. इंटरनेट कनेक्शन तपासा.' : 'Failed to load PDF engine. Check connection.');
+        }
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = '';
+        
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(' ');
+          fullText += pageText + '\n';
+        }
+
+        const parsed = parseOfflineVoterText(fullText);
+        setParsedVotersPreview(parsed);
+        setIsParsingOcr(false);
+        return;
+      }
+
+      const isDocx = file.name.endsWith('.docx') || file.name.endsWith('.doc');
+      if (isDocx) {
+        const mammothInstance = await loadExternalScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js', 'mammoth');
+        if (!mammothInstance) {
+          throw new Error(lang === 'mr' ? 'Word वाचक लोड करू शकलो नाही. इंटरनेट कनेक्शन तपासा.' : 'Failed to load Word engine. Check connection.');
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammothInstance.extractRawText({ arrayBuffer });
+        const fullText = result.value;
+
+        const parsed = parseOfflineVoterText(fullText);
+        setParsedVotersPreview(parsed);
+        setIsParsingOcr(false);
+        return;
+      }
+
+      // Read as plain text for text files
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const text = evt.target?.result as string;
+        const parsed = parseOfflineVoterText(text);
+        setParsedVotersPreview(parsed);
+        setIsParsingOcr(false);
+      };
+      reader.onerror = () => {
+        setVoterFileError(lang === 'mr' ? 'फाईल वाचण्यात त्रुटी आली.' : 'Error reading file.');
+        setIsParsingOcr(false);
+      };
+      reader.readAsText(file);
+
+    } catch (err: any) {
+      console.error('Offline parsing error:', err);
+      setVoterFileError(err.message || (lang === 'mr' ? 'फाईल प्रोसेस करताना चूक झाली.' : 'Error parsing file.'));
+      setIsParsingOcr(false);
+    }
+  };
+
+  // Offline handler for pasted text
+  const handleParseOcr = () => {
     if (!ocrText.trim()) {
       setOcrError(lang === 'mr' ? 'कृपया आधी ओसीआर केलेला मजकूर पेस्ट करा.' : 'Please paste OCRed text first.');
       return;
     }
-
-    setIsParsingOcr(true);
     setOcrError('');
+    setIsParsingOcr(true);
 
     try {
-      const res = await fetch('/api/parse-yaadi', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ocrText })
-      });
-
-      const responseText = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseErr) {
-        throw new Error(lang === 'mr' 
-          ? `सर्व्हरकडून अवैध प्रतिसाद आला (Status ${res.status}): ${responseText.slice(0, 150)}` 
-          : `Invalid server response (Status ${res.status}): ${responseText.slice(0, 150)}`);
+      const parsed = parseOfflineVoterText(ocrText);
+      if (parsed.length === 0) {
+        setOcrError(lang === 'mr' ? 'मजकुरामध्ये कोणतेही मतदार सापडले नाहीत. कृपया मजकूर तपासा.' : 'No voters found in the pasted text. Please verify the format.');
+        setIsParsingOcr(false);
+        return;
       }
-
-      if (res.ok && data.success && Array.isArray(data.voters)) {
-        // Merge or replace voters
-        // For security and cleanliness, we merge by matching srNo to avoid duplicating existing entries
-        const parsedVoters: Voter[] = data.voters;
-        
-        const mergedVoters = [...voters];
-        parsedVoters.forEach(pv => {
-          const existingIdx = mergedVoters.findIndex(v => v.srNo === pv.srNo);
-          if (existingIdx > -1) {
-            mergedVoters[existingIdx] = { ...mergedVoters[existingIdx], ...pv };
-          } else {
-            mergedVoters.push(pv);
-          }
-        });
-
-        // Sort by srNo numerically if possible
-        mergedVoters.sort((a, b) => {
-          const numA = parseInt(a.srNo);
-          const numB = parseInt(b.srNo);
-          if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
-          return numA - numB;
-        });
-
-        saveVoters(mergedVoters);
-        showToast(lang === 'mr' ? `${parsedVoters.length} मतदार यशस्वीरित्या आयात केले गेले!` : `${parsedVoters.length} voters imported successfully!`, 'success');
-        setOcrText('');
-        setShowOcrModal(false);
-      } else {
-        setOcrError(data.error || (lang === 'mr' ? 'डेटा प्रोसेसिंग अयशस्वी.' : 'Data parsing failed.'));
-      }
+      setParsedVotersPreview(parsed);
     } catch (err: any) {
-      console.error(err);
-      setOcrError((lang === 'mr' ? 'सर्व्हर त्रुटी: ' : 'Server communication error: ') + (err.message || err));
+      setOcrError(err.message || 'Parsing failed.');
     } finally {
       setIsParsingOcr(false);
     }
+  };
+
+  // Confirm and Save imported voters to Local Storage
+  const handleSaveImportedVoters = () => {
+    if (parsedVotersPreview.length === 0) return;
+
+    let finalVotersList: Voter[] = [];
+
+    if (importMode === 'replace') {
+      finalVotersList = [...parsedVotersPreview];
+    } else {
+      finalVotersList = [...voters];
+      parsedVotersPreview.forEach(pv => {
+        const existingIdx = finalVotersList.findIndex(v => v.srNo === pv.srNo);
+        if (existingIdx > -1) {
+          finalVotersList[existingIdx] = { ...finalVotersList[existingIdx], ...pv };
+        } else {
+          finalVotersList.push(pv);
+        }
+      });
+    }
+
+    finalVotersList.sort((a, b) => {
+      const numA = parseInt(a.srNo);
+      const numB = parseInt(b.srNo);
+      if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
+      return numA - numB;
+    });
+
+    saveVoters(finalVotersList);
+
+    showToast(
+      lang === 'mr'
+        ? `${parsedVotersPreview.length} मतदार यशस्वीरित्या आयात केले गेले!`
+        : `${parsedVotersPreview.length} voters imported successfully!`,
+      'success'
+    );
+
+    setVoterFile(null);
+    setOcrText('');
+    setParsedVotersPreview([]);
+    setShowOcrModal(false);
   };
 
   // Helper function to parse ranges and lists of serial numbers (e.g. "1-5, 10, 12")
@@ -889,164 +1120,23 @@ export default function App() {
     });
   };
 
-  // Handle Voter List PDF / Image File changes
+  // Handle Voter List PDF / Word / Excel / CSV File changes
   const handleVoterFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setVoterFile(file);
     setVoterFileError('');
     setOcrText(''); // Clear text when file is uploaded
-
-    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.csv');
-    if (isExcel) {
-      setVoterFileBase64('excel-placeholder');
-      setVoterFileMimeType('excel');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      if (evt.target?.result) {
-        setVoterFileBase64(evt.target.result as string);
-        setVoterFileMimeType(file.type);
-      }
-    };
-    reader.onerror = () => {
-      setVoterFileError(lang === 'mr' ? 'फाईल वाचण्यात त्रुटी आली.' : 'Error reading file.');
-    };
-    reader.readAsDataURL(file);
+    setParsedVotersPreview([]); // Reset previous preview
   };
 
-  // Call Gemini AI server-side endpoint to parse the uploaded PDF / Image file
+  // Call client-side offline parser to parse the uploaded file (PDF, Word, or Excel)
   const handleParsePdfOrImage = async () => {
     if (!voterFile) {
       setVoterFileError(lang === 'mr' ? 'कृपया आधी फाईल निवडा.' : 'Please select a file first.');
       return;
     }
-
-    setIsParsingOcr(true);
-    setVoterFileError('');
-
-    // If it is an Excel/CSV file, use frontend parser
-    if (voterFileMimeType === 'excel') {
-      try {
-        const parsedVoters = await parseExcelVoterList(voterFile);
-        
-        if (parsedVoters.length === 0) {
-          setVoterFileError(lang === 'mr' ? 'एक्सेल फाईलमध्ये कोणतेही मतदार सापडले नाहीत. कृपया दुसरी फाईल निवडा.' : 'No voters found in Excel. Please try another file.');
-          setIsParsingOcr(false);
-          return;
-        }
-
-        const mergedVoters = [...voters];
-        parsedVoters.forEach(pv => {
-          const existingIdx = mergedVoters.findIndex(v => v.srNo === pv.srNo);
-          if (existingIdx > -1) {
-            mergedVoters[existingIdx] = { ...mergedVoters[existingIdx], ...pv };
-          } else {
-            mergedVoters.push(pv);
-          }
-        });
-
-        // Sort numerically
-        mergedVoters.sort((a, b) => {
-          const numA = parseInt(a.srNo);
-          const numB = parseInt(b.srNo);
-          if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
-          return numA - numB;
-        });
-
-        saveVoters(mergedVoters);
-        showToast(
-          lang === 'mr' 
-            ? `${parsedVoters.length} मतदार एक्सेल मधून यशस्वीरित्या आयात केले गेले!` 
-            : `${parsedVoters.length} voters successfully imported from Excel!`, 
-          'success'
-        );
-        
-        // Reset state and close modal
-        setVoterFile(null);
-        setVoterFileBase64('');
-        setShowOcrModal(false);
-      } catch (err: any) {
-        console.error(err);
-        setVoterFileError(err.message || (lang === 'mr' ? 'एक्सेल डेटा प्रोसेसिंग अयशस्वी.' : 'Excel parsing failed.'));
-      } finally {
-        setIsParsingOcr(false);
-      }
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/parse-yaadi', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          fileBase64: voterFileBase64,
-          mimeType: voterFileMimeType
-        })
-      });
-
-      const responseText = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseErr) {
-        throw new Error(lang === 'mr' 
-          ? `सर्व्हरकडून अवैध प्रतिसाद आला (Status ${res.status}): ${responseText.slice(0, 150)}` 
-          : `Invalid server response (Status ${res.status}): ${responseText.slice(0, 150)}`);
-      }
-
-      if (res.ok && data.success && Array.isArray(data.voters)) {
-        const parsedVoters: Voter[] = data.voters;
-        
-        if (parsedVoters.length === 0) {
-          setVoterFileError(lang === 'mr' ? 'फाईलमध्ये कोणतेही मतदार सापडले नाहीत. कृपया दुसरा फोटो/पीडीएफ निवडा.' : 'No voters found in the file. Please try another image/PDF.');
-          setIsParsingOcr(false);
-          return;
-        }
-
-        const mergedVoters = [...voters];
-        parsedVoters.forEach(pv => {
-          const existingIdx = mergedVoters.findIndex(v => v.srNo === pv.srNo);
-          if (existingIdx > -1) {
-            mergedVoters[existingIdx] = { ...mergedVoters[existingIdx], ...pv };
-          } else {
-            mergedVoters.push(pv);
-          }
-        });
-
-        // Sort numerically
-        mergedVoters.sort((a, b) => {
-          const numA = parseInt(a.srNo);
-          const numB = parseInt(b.srNo);
-          if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
-          return numA - numB;
-        });
-
-        saveVoters(mergedVoters);
-        showToast(
-          lang === 'mr' 
-            ? `${parsedVoters.length} मतदार पीडीएफमधून यशस्वीरित्या आयात केले गेले!` 
-            : `${parsedVoters.length} voters successfully imported from document!`, 
-          'success'
-        );
-        
-        // Reset state and close modal
-        setVoterFile(null);
-        setVoterFileBase64('');
-        setShowOcrModal(false);
-      } else {
-        setVoterFileError(data.error || (lang === 'mr' ? 'पीडीएफ डेटा प्रोसेसिंग अयशस्वी.' : 'PDF parsing failed.'));
-      }
-    } catch (err: any) {
-      console.error(err);
-      setVoterFileError((lang === 'mr' ? 'सर्व्हर त्रुटी: ' : 'Server communication error: ') + (err.message || err));
-    } finally {
-      setIsParsingOcr(false);
-    }
+    await handleOfflineFileParse(voterFile);
   };
 
   // Handle Excel file change for form distribution
@@ -3279,16 +3369,16 @@ export default function App() {
         </div>
       </footer>
 
-      {/* MODAL: AI YAADI OCR IMPORT */}
+      {/* MODAL: OFFLINE YAADI IMPORT */}
       {showOcrModal && (
         <div id="ai-ocr-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden flex flex-col max-h-[95vh]">
             
             <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <h3 className="font-extrabold text-base md:text-lg">
-                  {lang === 'mr' ? "AI वर्ड फाईल / पीडीएफ / एक्सेल मतदार यादी आयात" : "AI Word / PDF / Excel Voter List Import"}
+                  {lang === 'mr' ? "ऑफलाईन मतदार यादी आयात (Word / PDF / Excel)" : "Offline Voter List Import (Word / PDF / Excel)"}
                 </h3>
               </div>
               <button 
@@ -3301,154 +3391,257 @@ export default function App() {
 
             <div className="p-6 overflow-y-auto space-y-4 flex-grow">
               
-              {/* Segmented control for PDF/Image Upload vs Text Paste */}
-              <div className="flex bg-slate-100 p-1 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setOcrInputMode('file')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    ocrInputMode === 'file' 
-                      ? 'bg-white text-slate-900 shadow-xs' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  📁 {lang === 'mr' ? "वर्ड / पीडीएफ / एक्सेल अपलोड" : "Word / PDF / Excel Upload"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOcrInputMode('text')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    ocrInputMode === 'text' 
-                      ? 'bg-white text-slate-900 shadow-xs' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  ✍️ {lang === 'mr' ? "मजकूर पेस्ट करा" : "Paste Text Copy"}
-                </button>
-              </div>
-
-              {ocrInputMode === 'file' ? (
+              {parsedVotersPreview.length > 0 ? (
                 <div className="space-y-4">
-                  <p className="text-xs text-slate-600 leading-relaxed bg-amber-50/50 p-4 rounded-xl border border-amber-200/50">
-                    {lang === 'mr' 
-                      ? "निवडणूक आयोगाची मतदार यादी वर्ड फाईल (.docx), पीडीएफ (PDF), एक्सेल (.xlsx/.xls/CSV) किंवा तिच्या पानाचा फोटो अपलोड करा. आमचे प्रगत AI मॉडेल आणि ऑटो-पार्सर मतदारांची माहिती स्वयंचलितपणे वाचून मुख्य यादीत अपडेट करेल." 
-                      : "Upload an official Voter List Word document (.docx), PDF, Excel (.xlsx/.xls/CSV) spreadsheet, or a photo of a voter list page. Our advanced parser and AI will automatically extract and structure all voter records into your dashboard."}
-                  </p>
-
-                  <div className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-2xl p-8 text-center transition-all bg-slate-50 hover:bg-amber-50/5 relative cursor-pointer group">
-                    <input 
-                      type="file" 
-                      accept="application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
-                      onChange={handleVoterFileChange}
-                      className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                      disabled={isParsingOcr}
-                    />
-                    <div className="flex flex-col items-center justify-center space-y-3">
-                      <div className="p-3 bg-white border border-slate-200 text-slate-700 rounded-xl group-hover:text-amber-600 group-hover:scale-105 transition-all shadow-xs">
-                        <Upload className="w-6 h-6" />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-extrabold text-slate-900">
-                          {voterFile ? voterFile.name : (lang === 'mr' ? "फाईल निवडा किंवा येथे ड्रॅग करा" : "Click to select or drag and drop file")}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">
-                          {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • ${voterFile.name.endsWith('.docx') || voterFile.name.endsWith('.doc') ? 'Word Document' : voterFile.name.endsWith('.xlsx') || voterFile.name.endsWith('.xls') || voterFile.name.endsWith('.csv') ? 'Excel/CSV Spreadsheet' : 'File'}` : (lang === 'mr' ? "मर्यादा: ५ MB पर्यंत (Word, PDF, Excel, PNG, JPG)" : "Accepts official Word, PDF, Excel, PNG, or JPEG up to 5MB")}
-                        </p>
-                      </div>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div>
+                      <h4 className="text-sm font-extrabold text-slate-900">
+                        {lang === 'mr' ? "🔍 आयात मतदार यादी पुनरावलोकन" : "🔍 Parsed Voters Preview"}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                        {lang === 'mr'
+                          ? `आढळलेले एकूण मतदार: ${parsedVotersPreview.length}. स्थानिक स्टोरेजमध्ये सेव्ह करण्यापूर्वी पुनरावलोकन करा.`
+                          : `Successfully found ${parsedVotersPreview.length} voters. Please review before saving.`}
+                      </p>
+                    </div>
+                    
+                    {/* Import Mode Selection */}
+                    <div className="flex bg-slate-200/60 p-1 rounded-xl shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setImportMode('merge')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          importMode === 'merge'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        🔄 {lang === 'mr' ? "यादीत जोडा (Merge)" : "Merge List"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportMode('replace')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          importMode === 'replace'
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ⚠️ {lang === 'mr' ? "यादी बदला (Replace)" : "Replace List"}
+                      </button>
                     </div>
                   </div>
 
-                  {voterFileError && (
-                    <div className="bg-red-50 text-red-800 p-3 rounded-xl border border-red-200 text-xs font-semibold flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span>{voterFileError}</span>
-                    </div>
-                  )}
+                  {/* Preview Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[45vh] overflow-y-auto shadow-inner bg-slate-50">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 border-b border-slate-200 sticky top-0 font-extrabold text-slate-700">
+                          <th className="p-3 text-center w-14">{lang === 'mr' ? "अनु." : "Sr No"}</th>
+                          <th className="p-3">{lang === 'mr' ? "मतदाराचे नाव" : "Voter Name"}</th>
+                          <th className="p-3 w-28">{lang === 'mr' ? "EPIC कार्ड क्र." : "EPIC Card No"}</th>
+                          <th className="p-3 w-20 text-center">{lang === 'mr' ? "वय" : "Age"}</th>
+                          <th className="p-3 w-20 text-center">{lang === 'mr' ? "लिंग" : "Gender"}</th>
+                          <th className="p-3 w-24 text-center">{lang === 'mr' ? "घर क्र." : "House No"}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200/60">
+                        {parsedVotersPreview.map((v, i) => (
+                          <tr key={i} className="hover:bg-amber-50/20 bg-white transition-colors text-slate-800">
+                            <td className="p-3 text-center font-mono font-bold text-slate-500 bg-slate-50/50">{v.srNo}</td>
+                            <td className="p-3 font-semibold text-slate-900">{v.name}</td>
+                            <td className="p-3 font-mono text-slate-600">{v.epic || '—'}</td>
+                            <td className="p-3 text-center font-semibold">{v.age || '—'}</td>
+                            <td className="p-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                v.gender === 'Female' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {v.gender === 'Female' ? (lang === 'mr' ? "महिला" : "Female") : (lang === 'mr' ? "पुरुष" : "Male")}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center font-medium text-slate-700">{v.houseNo || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    {t.ocrDescription[lang]}
-                  </p>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      {lang === 'mr' ? "मतदार यादीचा मजकूर पेस्ट करा:" : "Paste Voter List OCR Text:"}
-                    </label>
-                    <textarea
-                      id="ocr-text-input"
-                      rows={8}
-                      value={ocrText}
-                      onChange={(e) => setOcrText(e.target.value)}
-                      placeholder={t.ocrTextareaPlaceholder[lang]}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs md:text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all text-slate-800"
-                      disabled={isParsingOcr}
-                    ></textarea>
+                <>
+                  {/* Segmented control for PDF/Image Upload vs Text Paste */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setOcrInputMode('file')}
+                      className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        ocrInputMode === 'file' 
+                          ? 'bg-white text-slate-900 shadow-xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      📁 {lang === 'mr' ? "वर्ड / पीडीएफ / एक्सेल अपलोड" : "Word / PDF / Excel Upload"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOcrInputMode('text')}
+                      className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        ocrInputMode === 'text' 
+                          ? 'bg-white text-slate-900 shadow-xs' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      ✍️ {lang === 'mr' ? "मजकूर पेस्ट करा" : "Paste Text Copy"}
+                    </button>
                   </div>
 
-                  {ocrError && (
-                    <div className="bg-red-50 text-red-800 p-3 rounded-xl border border-red-200 text-xs font-semibold flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span>{ocrError}</span>
+                  {ocrInputMode === 'file' ? (
+                    <div className="space-y-4">
+                      <p className="text-xs text-slate-600 leading-relaxed bg-amber-50/50 p-4 rounded-xl border border-amber-200/50">
+                        {lang === 'mr' 
+                          ? "निवडणूक आयोगाची मतदार यादी वर्ड फाईल (.docx), पीडीएफ (PDF) किंवा एक्सेल (.xlsx/.xls/CSV) फाईल अपलोड करा. आमचे ऑफलाईन इंजिन फाईलमधील मतदार, अनुक्रमांक, वय आणि ओळखपत्र क्रमांक स्वयंचलितपणे वाचून मुख्य यादीत समाविष्ट करेल." 
+                          : "Upload a voter list Word document (.docx), PDF, or Excel (.xlsx/.xls/CSV) spreadsheet. Our advanced offline engine will instantly parse Sr No, name, age, gender, EPIC, and house number completely on your device."}
+                      </p>
+
+                      <div className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-2xl p-8 text-center transition-all bg-slate-50 hover:bg-amber-50/5 relative cursor-pointer group">
+                        <input 
+                          type="file" 
+                          accept="application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain" 
+                          onChange={handleVoterFileChange}
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                          disabled={isParsingOcr}
+                        />
+                        <div className="flex flex-col items-center justify-center space-y-3">
+                          <div className="p-3 bg-white border border-slate-200 text-slate-700 rounded-xl group-hover:text-amber-600 group-hover:scale-105 transition-all shadow-xs">
+                            <Upload className="w-6 h-6" />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-extrabold text-slate-900">
+                              {voterFile ? voterFile.name : (lang === 'mr' ? "फाईल निवडा किंवा येथे ड्रॅग करा" : "Click to select or drag and drop file")}
+                            </p>
+                            <p className="text-[10px] text-slate-400 font-semibold">
+                              {voterFile ? `${(voterFile.size / 1024 / 1024).toFixed(2)} MB • ${(voterFile.name.endsWith('.docx') || voterFile.name.endsWith('.doc')) ? 'Word' : voterFile.name.endsWith('.pdf') ? 'PDF' : 'Spreadsheet'}` : (lang === 'mr' ? "मर्यादा: १० MB पर्यंत (Word, PDF, Excel, Text)" : "Accepts Word, PDF, Excel, CSV, or Text files up to 10MB")}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {voterFileError && (
+                        <div className="bg-red-50 text-red-800 p-3 rounded-xl border border-red-200 text-xs font-semibold flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span>{voterFileError}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        {lang === 'mr' 
+                          ? "मतदार यादीमधील ओळ किंवा मसुदा थेट पेस्ट करा. आमचे ऑफलाईन पार्सर मतदार, अनुक्रमांक, वय आणि इतर तपशील त्वरित संकलित करेल."
+                          : "Paste raw lines from your voter list text. The offline regex-based parser will extract and group the fields instantly."}
+                      </p>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                          {lang === 'mr' ? "मतदार यादीचा मजकूर पेस्ट करा:" : "Paste Voter List Text:"}
+                        </label>
+                        <textarea
+                          id="ocr-text-input"
+                          rows={8}
+                          value={ocrText}
+                          onChange={(e) => setOcrText(e.target.value)}
+                          placeholder={t.ocrTextareaPlaceholder[lang]}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs md:text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all text-slate-800"
+                          disabled={isParsingOcr}
+                        ></textarea>
+                      </div>
+
+                      {ocrError && (
+                        <div className="bg-red-50 text-red-800 p-3 rounded-xl border border-red-200 text-xs font-semibold flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span>{ocrError}</span>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
 
             </div>
 
             <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setVoterFile(null);
-                  setVoterFileBase64('');
-                  setVoterFileError('');
-                  setOcrText('');
-                  setOcrError('');
-                  setShowOcrModal(false);
-                }}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 transition-colors cursor-pointer"
-                disabled={isParsingOcr}
-              >
-                {lang === 'mr' ? "बंद करा" : "Cancel"}
-              </button>
-              
-              {ocrInputMode === 'file' ? (
-                <button
-                  onClick={handleParsePdfOrImage}
-                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                  disabled={isParsingOcr || !voterFileBase64}
-                >
-                  {isParsingOcr ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      <span>{t.ocrProcessing[lang]}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                      <span>{lang === 'mr' ? "फाईल प्रोसेस करा (AI)" : "Analyze Document (AI)"}</span>
-                    </>
-                  )}
-                </button>
+              {parsedVotersPreview.length > 0 ? (
+                <>
+                  <button
+                    onClick={() => {
+                      setVoterFile(null);
+                      setOcrText('');
+                      setParsedVotersPreview([]);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 transition-colors cursor-pointer"
+                  >
+                    ⬅️ {lang === 'mr' ? "दुसरी फाईल निवडा" : "Clear & Choose Another"}
+                  </button>
+                  <button
+                    onClick={handleSaveImportedVoters}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    💾 {lang === 'mr' ? "स्थानिक स्टोरेजमध्ये सेव्ह करा" : "Confirm & Import to Local Storage"}
+                  </button>
+                </>
               ) : (
-                <button
-                  onClick={handleParseOcr}
-                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                  disabled={isParsingOcr || !ocrText.trim()}
-                >
-                  {isParsingOcr ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      <span>{t.ocrProcessing[lang]}</span>
-                    </>
+                <>
+                  <button
+                    onClick={() => {
+                      setVoterFile(null);
+                      setVoterFileError('');
+                      setOcrText('');
+                      setOcrError('');
+                      setShowOcrModal(false);
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 transition-colors cursor-pointer"
+                    disabled={isParsingOcr}
+                  >
+                    {lang === 'mr' ? "बंद करा" : "Cancel"}
+                  </button>
+                  
+                  {ocrInputMode === 'file' ? (
+                    <button
+                      onClick={handleParsePdfOrImage}
+                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      disabled={isParsingOcr || !voterFile}
+                    >
+                      {isParsingOcr ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          <span>{lang === 'mr' ? "वाचत आहे..." : "Parsing file offline..."}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                          <span>{lang === 'mr' ? "फाईल प्रोसेस करा (ऑफलाईन)" : "Analyze Document (Offline)"}</span>
+                        </>
+                      )}
+                    </button>
                   ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                      <span>{t.ocrSubmit[lang]}</span>
-                    </>
+                    <button
+                      onClick={handleParseOcr}
+                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      disabled={isParsingOcr || !ocrText.trim()}
+                    >
+                      {isParsingOcr ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          <span>{lang === 'mr' ? "वाचत आहे..." : "Parsing text offline..."}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                          <span>{lang === 'mr' ? "मजकूर प्रोसेस करा (ऑफलाईन)" : "Process Text (Offline)"}</span>
+                        </>
+                      )}
+                    </button>
                   )}
-                </button>
+                </>
               )}
             </div>
 
