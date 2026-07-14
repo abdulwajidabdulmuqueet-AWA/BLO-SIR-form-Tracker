@@ -726,8 +726,10 @@ export default function App() {
     setDistNotes('');
     setSelectedVoterSrNo('');
     
-    // Switch to search/collection tab
-    setActiveTab('collection');
+    // Focus the full name of recipient input box on the +New distribution screen
+    setTimeout(() => {
+      recipientNameRef.current?.focus();
+    }, 50);
   };
 
   // Toggle collection status for a single form
@@ -2390,7 +2392,15 @@ export default function App() {
                         type="tel" 
                         maxLength={10}
                         value={recipientMobile}
-                        onChange={(e) => setRecipientMobile(e.target.value.replace(/\D/g, ''))}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setRecipientMobile(val);
+                          if (val.length === 10) {
+                            setTimeout(() => {
+                              tempFormNumberRef.current?.focus();
+                            }, 50);
+                          }
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -2461,7 +2471,10 @@ export default function App() {
                               }
                             }}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ' || e.key === ',') {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddDistribution(e);
+                              } else if (e.key === ' ' || e.key === ',') {
                                 e.preventDefault();
                                 addFormNumberChip(tempFormNumber);
                               }
