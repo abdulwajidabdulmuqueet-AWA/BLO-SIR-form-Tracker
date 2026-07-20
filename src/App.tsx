@@ -835,12 +835,23 @@ export default function App() {
       return;
     }
 
-    // Find new linked voter
-    let newLinkedVoter = voters.find(v => v.srNo === cleanVoterSrNo);
-    if (!newLinkedVoter && cleanVoterSrNo === '') {
-      // Try matching by name
-      newLinkedVoter = voters.find(v => v.name.toLowerCase() === cleanRecipientName.toLowerCase());
+    // Find new linked voter(s)
+    const cleanVoterSrNos = editVoterSrNo.trim()
+      .split(/[\s,]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    let finalVoterSrNos = [...cleanVoterSrNos];
+    if (finalVoterSrNos.length === 0) {
+      const matchByName = voters.find(v => v.name.toLowerCase() === cleanRecipientName.toLowerCase());
+      if (matchByName) {
+        finalVoterSrNos.push(matchByName.srNo);
+      }
     }
+
+    const matchedVoters = voters.filter(v => finalVoterSrNos.includes(v.srNo));
+    const voterSrNoVal = matchedVoters.map(v => v.srNo).join(', ') || null;
+    const voterNameVal = matchedVoters.map(v => v.name).join(', ') || null;
 
     // Apply updates to the form list
     const updatedForms = forms.map(f => {
@@ -860,8 +871,8 @@ export default function App() {
           formNumber: cleanFormNumber,
           recipientName: cleanRecipientName,
           recipientMobile: cleanRecipientMobile,
-          voterSrNo: newLinkedVoter ? newLinkedVoter.srNo : null,
-          voterName: newLinkedVoter ? newLinkedVoter.name : null,
+          voterSrNo: voterSrNoVal,
+          voterName: voterNameVal,
           status: editStatus,
           collectedAt: collectedAtVal,
           notes: editNotes.trim() || undefined
@@ -875,13 +886,16 @@ export default function App() {
     // Sync voter links
     let updatedVoters = [...voters];
 
-    // 1. Remove old link from old voter if it was linked
-    const oldVoterSrNo = editingForm.voterSrNo;
+    const oldVoterSrNos = (editingForm.voterSrNo || '')
+      .split(/[\s,]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
     const oldFormNum = editingForm.formNumber;
 
-    if (oldVoterSrNo) {
+    // 1. Remove old link from old voters if they were linked
+    if (oldVoterSrNos.length > 0) {
       updatedVoters = updatedVoters.map(v => {
-        if (v.srNo === oldVoterSrNo) {
+        if (oldVoterSrNos.includes(v.srNo)) {
           const list = v.linkedFormNo ? v.linkedFormNo.split(',').map(s => s.trim()).filter(Boolean) : [];
           const filtered = list.filter(n => n !== oldFormNum);
           return {
@@ -893,11 +907,11 @@ export default function App() {
       });
     }
 
-    // 2. Add/update link on the new voter
-    if (newLinkedVoter) {
-      const targetSrNo = newLinkedVoter.srNo;
+    // 2. Add/update link on the new voters
+    if (matchedVoters.length > 0) {
+      const matchedSrNos = matchedVoters.map(v => v.srNo);
       updatedVoters = updatedVoters.map(v => {
-        if (v.srNo === targetSrNo) {
+        if (matchedSrNos.includes(v.srNo)) {
           const list = v.linkedFormNo ? v.linkedFormNo.split(',').map(s => s.trim()).filter(Boolean) : [];
           if (!list.includes(cleanFormNumber)) {
             list.push(cleanFormNumber);
@@ -1758,14 +1772,18 @@ export default function App() {
   // Generate Reports
   const downloadFullDistributionCSV = () => {
     const exportData = forms.map(f => {
-      const vSr = f.voterSrNo || f.formNumber;
-      const matchedVoter = voters.find(v => v.srNo === vSr);
+      const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      let matchedVoters = voters.filter(v => srs.includes(v.srNo));
+      if (matchedVoters.length === 0 && f.formNumber) {
+        const fallback = voters.find(v => v.srNo === f.formNumber);
+        if (fallback) matchedVoters = [fallback];
+      }
       return {
         'Form Number (फॉर्म क्र)': f.formNumber,
         'Recipient Name (स्वीकारणाऱ्याचे नाव)': f.recipientName,
         'Mobile Number (मोबाईल)': f.recipientMobile,
-        'Voter List Serial No (मतदार यादी अनुक्रमांक)': matchedVoter ? matchedVoter.srNo : 'N/A',
-        'Voter Name (मतदाराचे नाव)': matchedVoter ? matchedVoter.name : 'N/A',
+        'Voter List Serial No (मतदार यादी अनुक्रमांक)': matchedVoters.length > 0 ? matchedVoters.map(v => v.srNo).join(', ') : 'N/A',
+        'Voter Name (मतदाराचे नाव)': matchedVoters.length > 0 ? matchedVoters.map(v => v.name).join(', ') : 'N/A',
         'Status (स्थिती)': f.status === 'Collected' ? (lang === 'mr' ? 'जमा झाले (Collected)' : 'Collected') : (lang === 'mr' ? 'प्रलंबित (Distributed)' : 'Distributed'),
         'Distribution Date (वाटप तारीख)': new Date(f.distributedAt).toLocaleString(),
         'Collection Date (जमा तारीख)': f.collectedAt ? new Date(f.collectedAt).toLocaleString() : 'N/A',
@@ -1778,14 +1796,18 @@ export default function App() {
   const downloadPendingCallListCSV = () => {
     const pendingForms = forms.filter(f => f.status === 'Distributed');
     const exportData = pendingForms.map(f => {
-      const vSr = f.voterSrNo || f.formNumber;
-      const matchedVoter = voters.find(v => v.srNo === vSr);
+      const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      let matchedVoters = voters.filter(v => srs.includes(v.srNo));
+      if (matchedVoters.length === 0 && f.formNumber) {
+        const fallback = voters.find(v => v.srNo === f.formNumber);
+        if (fallback) matchedVoters = [fallback];
+      }
       return {
         'Recipient Name (नाव)': f.recipientName,
         'Mobile Number (मोबाईल)': f.recipientMobile,
         'Form Number (फॉर्म क्र)': f.formNumber,
-        'Linked Voter SrNo (मतदार अनुक्रमांक)': matchedVoter ? matchedVoter.srNo : 'N/A',
-        'Linked Voter Name (मतदाराचे नाव)': matchedVoter ? matchedVoter.name : 'N/A',
+        'Linked Voter SrNo (मतदार अनुक्रमांक)': matchedVoters.length > 0 ? matchedVoters.map(v => v.srNo).join(', ') : 'N/A',
+        'Linked Voter Name (मतदाराचे नाव)': matchedVoters.length > 0 ? matchedVoters.map(v => v.name).join(', ') : 'N/A',
         'Days Since Distribution (वाटपापासून दिवस)': Math.floor((Date.now() - new Date(f.distributedAt).getTime()) / (1000 * 60 * 60 * 24))
       };
     });
@@ -1794,7 +1816,10 @@ export default function App() {
 
   const downloadVoterStatusCSV = () => {
     const exportData = voters.map(v => {
-      const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
+      const linkedForm = forms.find(f => {
+        const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+        return srs.includes(v.srNo) || f.formNumber === v.srNo;
+      });
       return {
         'Sr No (यादी अनुक्रमांक)': v.srNo,
         'Voter Name (मतदाराचे नाव)': v.name,
@@ -2271,13 +2296,21 @@ export default function App() {
                           </td>
                           <td className="py-3.5 px-3">
                             {(() => {
-                              const vSr = f.voterSrNo || f.formNumber;
-                              const matchedVoter = voters.find(v => v.srNo === vSr);
-                              if (matchedVoter) {
+                              const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                              if (srs.length === 0 && f.formNumber) {
+                                const fallback = voters.find(v => v.srNo === f.formNumber);
+                                if (fallback) srs.push(fallback.srNo);
+                              }
+                              const matchedVoters = voters.filter(v => srs.includes(v.srNo));
+                              if (matchedVoters.length > 0) {
                                 return (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">Sr.{matchedVoter.srNo}</span>
-                                    <span className="text-slate-700 font-medium truncate max-w-[150px]">{matchedVoter.name}</span>
+                                  <div className="flex flex-col gap-1">
+                                    {matchedVoters.map(v => (
+                                      <div key={v.srNo} className="flex items-center gap-1.5">
+                                        <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">Sr.{v.srNo}</span>
+                                        <span className="text-slate-700 font-medium truncate max-w-[150px]">{v.name}</span>
+                                      </div>
+                                    ))}
                                   </div>
                                 );
                               }
@@ -3160,13 +3193,24 @@ export default function App() {
                           </td>
                           <td className="py-4 px-4">
                             {(() => {
-                              const vSr = f.voterSrNo || f.formNumber;
-                              const matchedVoter = voters.find(v => v.srNo === vSr);
-                              if (matchedVoter) {
+                              const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                              if (srs.length === 0 && f.formNumber) {
+                                // Fallback to form number matching srNo
+                                const matched = voters.find(v => v.srNo === f.formNumber);
+                                if (matched) srs.push(matched.srNo);
+                              }
+                              
+                              const matchedVoters = voters.filter(v => srs.includes(v.srNo));
+                              
+                              if (matchedVoters.length > 0) {
                                 return (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 rounded">Sr.{matchedVoter.srNo}</span>
-                                    <span className="text-slate-800 font-semibold">{matchedVoter.name}</span>
+                                  <div className="flex flex-col gap-1.5">
+                                    {matchedVoters.map(v => (
+                                      <div key={v.srNo} className="flex items-center gap-1.5">
+                                        <span className="bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 rounded whitespace-nowrap">Sr.{v.srNo}</span>
+                                        <span className="text-slate-800 font-semibold text-xs md:text-sm">{v.name}</span>
+                                      </div>
+                                    ))}
                                   </div>
                                 );
                               }
@@ -3407,7 +3451,10 @@ export default function App() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {group.members.map(v => {
-                            const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
+                            const linkedForm = forms.find(f => {
+                              const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                              return srs.includes(v.srNo) || f.formNumber === v.srNo;
+                            });
 
                             return (
                               <tr key={v.srNo} className="hover:bg-slate-50/20 transition-colors">
@@ -3520,7 +3567,10 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredVoters.map(v => {
-                        const linkedForm = forms.find(f => f.voterSrNo === v.srNo || f.formNumber === v.srNo);
+                        const linkedForm = forms.find(f => {
+                          const srs = (f.voterSrNo || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                          return srs.includes(v.srNo) || f.formNumber === v.srNo;
+                        });
 
                         return (
                           <tr key={v.srNo} className="hover:bg-slate-50/50 transition-colors">
@@ -4503,22 +4553,22 @@ export default function App() {
                 />
               </div>
 
-              {/* Linked Voter Sr No */}
+               {/* Linked Voter Sr No */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  {lang === 'mr' ? "लिंक केलेला मतदार यादी अनुक्रमांक (ऐच्छिक):" : "Linked Voter Serial No (Optional):"}
+                  {lang === 'mr' ? "लिंक केलेले मतदार यादी अनुक्रमांक (ऐच्छिक, स्वल्पविराम/स्पेसने वेगळे करा):" : "Linked Voter Serial No(s) (Optional, split with comma/space):"}
                 </label>
                 <input 
                   type="text"
                   value={editVoterSrNo}
-                  onChange={(e) => setEditVoterSrNo(e.target.value.trim())}
-                  placeholder={lang === 'mr' ? "उदा. ४३" : "e.g. 43"}
+                  onChange={(e) => setEditVoterSrNo(e.target.value)}
+                  placeholder={lang === 'mr' ? "उदा. ४३, ४४" : "e.g. 43, 44"}
                   className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
                 />
                 <p className="text-[10px] text-slate-500 mt-1">
                   {lang === 'mr' 
-                    ? "* मतदार यादीतील मतदाराशी फॉर्म जोडण्यासाठी त्यांचा अचूक अनुक्रमांक प्रविष्ट करा." 
-                    : "* Enter the exact Voter Serial Number to associate this form with a voter from the list."}
+                    ? "* या फॉर्मशी एकापेक्षा जास्त मतदार जोडण्यासाठी मतदार यादी अनुक्रमांक (उदा. '४३, ४४' किंवा '४३ ४४') प्रविष्ट करा." 
+                    : "* Enter one or more Voter Serial Numbers (separated by commas or spaces) to associate multiple voters with this form."}
                 </p>
               </div>
 
