@@ -26,7 +26,8 @@ import {
   Link2,
   Unlink,
   Eye,
-  Database
+  Database,
+  Pencil
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -142,6 +143,16 @@ export default function App() {
   const [formInputMode, setFormInputMode] = useState<'quick' | 'range'>('quick');
   const [distNotes, setDistNotes] = useState('');
   const [selectedVoterSrNo, setSelectedVoterSrNo] = useState<string>('');
+
+  // Form editing states
+  const [showEditFormModal, setShowEditFormModal] = useState(false);
+  const [editingForm, setEditingForm] = useState<FormRecord | null>(null);
+  const [editRecipientName, setEditRecipientName] = useState('');
+  const [editRecipientMobile, setEditRecipientMobile] = useState('');
+  const [editFormNumber, setEditFormNumber] = useState('');
+  const [editVoterSrNo, setEditVoterSrNo] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editStatus, setEditStatus] = useState<'Distributed' | 'Collected'>('Distributed');
 
   // Searching & Filtering
   const [searchQuery, setSearchQuery] = useState('');
@@ -787,6 +798,124 @@ export default function App() {
       }
       showToast(lang === 'mr' ? "नोंद हटवली!" : "Record deleted!", 'info');
     }
+  };
+
+  // Handle updating an existing form distribution record
+  const handleUpdateFormRecord = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingForm) return;
+
+    const cleanRecipientName = editRecipientName.trim();
+    const cleanRecipientMobile = editRecipientMobile.trim().replace(/\D/g, '');
+    const cleanFormNumber = editFormNumber.trim().replace(/\D/g, '');
+    const cleanVoterSrNo = editVoterSrNo.trim().replace(/\s/g, '');
+
+    if (!cleanRecipientName) {
+      showToast(lang === 'mr' ? "कृपया स्वीकारणाऱ्याचे नाव टाका." : "Please enter recipient name.", 'error');
+      return;
+    }
+    if (!cleanRecipientMobile || cleanRecipientMobile.length < 10) {
+      showToast(lang === 'mr' ? "कृपया वैध १० अंकी मोबाईल नंबर टाका." : "Please enter a valid 10-digit mobile number.", 'error');
+      return;
+    }
+    if (!cleanFormNumber) {
+      showToast(lang === 'mr' ? "कृपया फॉर्म क्रमांक टाका." : "Please enter form number.", 'error');
+      return;
+    }
+
+    // Check conflict
+    const conflict = forms.find(f => f.formNumber === cleanFormNumber && f.id !== editingForm.id);
+    if (conflict) {
+      showToast(
+        lang === 'mr' 
+          ? `फॉर्म क्रमांक ${cleanFormNumber} आधीच वाटप केला आहे!` 
+          : `Form number ${cleanFormNumber} is already distributed!`, 
+        'error'
+      );
+      return;
+    }
+
+    // Find new linked voter
+    let newLinkedVoter = voters.find(v => v.srNo === cleanVoterSrNo);
+    if (!newLinkedVoter && cleanVoterSrNo === '') {
+      // Try matching by name
+      newLinkedVoter = voters.find(v => v.name.toLowerCase() === cleanRecipientName.toLowerCase());
+    }
+
+    // Apply updates to the form list
+    const updatedForms = forms.map(f => {
+      if (f.id === editingForm.id) {
+        const wasCollected = f.status === 'Collected';
+        const isCollectedNow = editStatus === 'Collected';
+        let collectedAtVal = f.collectedAt;
+        
+        if (isCollectedNow && !wasCollected) {
+          collectedAtVal = new Date().toISOString();
+        } else if (!isCollectedNow) {
+          collectedAtVal = null;
+        }
+
+        return {
+          ...f,
+          formNumber: cleanFormNumber,
+          recipientName: cleanRecipientName,
+          recipientMobile: cleanRecipientMobile,
+          voterSrNo: newLinkedVoter ? newLinkedVoter.srNo : null,
+          voterName: newLinkedVoter ? newLinkedVoter.name : null,
+          status: editStatus,
+          collectedAt: collectedAtVal,
+          notes: editNotes.trim() || undefined
+        };
+      }
+      return f;
+    });
+
+    saveForms(updatedForms);
+
+    // Sync voter links
+    let updatedVoters = [...voters];
+
+    // 1. Remove old link from old voter if it was linked
+    const oldVoterSrNo = editingForm.voterSrNo;
+    const oldFormNum = editingForm.formNumber;
+
+    if (oldVoterSrNo) {
+      updatedVoters = updatedVoters.map(v => {
+        if (v.srNo === oldVoterSrNo) {
+          const list = v.linkedFormNo ? v.linkedFormNo.split(',').map(s => s.trim()).filter(Boolean) : [];
+          const filtered = list.filter(n => n !== oldFormNum);
+          return {
+            ...v,
+            linkedFormNo: filtered.length > 0 ? filtered.join(', ') : null
+          };
+        }
+        return v;
+      });
+    }
+
+    // 2. Add/update link on the new voter
+    if (newLinkedVoter) {
+      const targetSrNo = newLinkedVoter.srNo;
+      updatedVoters = updatedVoters.map(v => {
+        if (v.srNo === targetSrNo) {
+          const list = v.linkedFormNo ? v.linkedFormNo.split(',').map(s => s.trim()).filter(Boolean) : [];
+          if (!list.includes(cleanFormNumber)) {
+            list.push(cleanFormNumber);
+          }
+          return {
+            ...v,
+            linkedFormNo: list.join(', ')
+          };
+        }
+        return v;
+      });
+    }
+
+    saveVoters(updatedVoters);
+
+    showToast(lang === 'mr' ? "वाटप नोंद यशस्वीरित्या अद्यतनित केली!" : "Distribution record successfully updated!", 'success');
+    setShowEditFormModal(false);
+    setEditingForm(null);
   };
 
   // Load external scripts (like mammoth or pdf.js) dynamically
@@ -3102,6 +3231,23 @@ export default function App() {
                               </button>
 
                               <button
+                                onClick={() => {
+                                  setEditingForm(f);
+                                  setEditRecipientName(f.recipientName);
+                                  setEditRecipientMobile(f.recipientMobile);
+                                  setEditFormNumber(f.formNumber);
+                                  setEditVoterSrNo(f.voterSrNo || '');
+                                  setEditNotes(f.notes || '');
+                                  setEditStatus(f.status);
+                                  setShowEditFormModal(true);
+                                }}
+                                className="p-1.5 rounded-xl border border-amber-100 text-amber-700 hover:bg-amber-50 transition-all cursor-pointer"
+                                title={lang === 'mr' ? "बदला / एडिट करा" : "Edit Record"}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+
+                              <button
                                 onClick={() => handleDeleteFormRecord(f.id)}
                                 className="p-1.5 rounded-xl border border-rose-100 text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
                                 title="Delete"
@@ -4281,6 +4427,163 @@ export default function App() {
                   }`}
                 >
                   {lang === 'mr' ? "कुटुंब लिंक करा" : "Connect Family"}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT FORM DISTRIBUTION */}
+      {showEditFormModal && editingForm && (
+        <div id="edit-form-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col">
+            
+            <div className="bg-gradient-to-r from-amber-600 to-amber-700 text-white p-5 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-5 h-5" />
+                <h3 className="font-extrabold text-base md:text-lg">
+                  {lang === 'mr' ? "वाटप फॉर्म तपशील बदला" : "Edit Form Distribution"}
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowEditFormModal(false);
+                  setEditingForm(null);
+                }}
+                className="text-amber-100 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateFormRecord} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              
+              {/* Recipient Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {lang === 'mr' ? "स्वीकारणाऱ्याचे पूर्ण नाव:" : "Full Name of Recipient:"}
+                </label>
+                <input 
+                  type="text"
+                  required
+                  value={editRecipientName}
+                  onChange={(e) => setEditRecipientName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Recipient Mobile */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {lang === 'mr' ? "मोबाईल नंबर (१० अंकी):" : "Mobile Number (10 Digit):"}
+                </label>
+                <input 
+                  type="text"
+                  required
+                  maxLength={10}
+                  value={editRecipientMobile}
+                  onChange={(e) => setEditRecipientMobile(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Form Number */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {lang === 'mr' ? "फॉर्म क्रमांक:" : "Form Number:"}
+                </label>
+                <input 
+                  type="text"
+                  required
+                  value={editFormNumber}
+                  onChange={(e) => setEditFormNumber(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Linked Voter Sr No */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {lang === 'mr' ? "लिंक केलेला मतदार यादी अनुक्रमांक (ऐच्छिक):" : "Linked Voter Serial No (Optional):"}
+                </label>
+                <input 
+                  type="text"
+                  value={editVoterSrNo}
+                  onChange={(e) => setEditVoterSrNo(e.target.value.trim())}
+                  placeholder={lang === 'mr' ? "उदा. ४३" : "e.g. 43"}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {lang === 'mr' 
+                    ? "* मतदार यादीतील मतदाराशी फॉर्म जोडण्यासाठी त्यांचा अचूक अनुक्रमांक प्रविष्ट करा." 
+                    : "* Enter the exact Voter Serial Number to associate this form with a voter from the list."}
+                </p>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2">
+                  {lang === 'mr' ? "फॉर्म स्थिती (Status):" : "Form Status:"}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditStatus('Distributed')}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                      editStatus === 'Distributed'
+                        ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-xs ring-1 ring-amber-300'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {lang === 'mr' ? "प्रलंबित (Distributed)" : "Pending (Distributed)"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditStatus('Collected')}
+                    className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                      editStatus === 'Collected'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs ring-1 ring-emerald-300'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {lang === 'mr' ? "जमा (Collected)" : "Collected"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {lang === 'mr' ? "टीप / रिमार्क (ऐच्छिक):" : "Notes / Remarks (Optional):"}
+                </label>
+                <textarea 
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder={lang === 'mr' ? "काही विशेष रिमार्क किंवा टीप..." : "Any special comments or remarks..."}
+                  rows={2}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Modal footer actions */}
+              <div className="border-t border-slate-100 pt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditFormModal(false);
+                    setEditingForm(null);
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer"
+                >
+                  {lang === 'mr' ? "रद्द करा" : "Cancel"}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-5 py-2.5 rounded-lg shadow-sm cursor-pointer transition-all"
+                >
+                  {lang === 'mr' ? "अद्यतनित करा" : "Update Record"}
                 </button>
               </div>
 
