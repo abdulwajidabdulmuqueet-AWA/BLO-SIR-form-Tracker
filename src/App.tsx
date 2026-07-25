@@ -154,6 +154,16 @@ export default function App() {
   const [editNotes, setEditNotes] = useState('');
   const [editStatus, setEditStatus] = useState<'Distributed' | 'Collected'>('Distributed');
 
+  // Voter editing states
+  const [showEditVoterModal, setShowEditVoterModal] = useState(false);
+  const [editingVoter, setEditingVoter] = useState<Voter | null>(null);
+  const [editVoterSrNoVal, setEditVoterSrNoVal] = useState('');
+  const [editVoterNameVal, setEditVoterNameVal] = useState('');
+  const [editVoterEpicVal, setEditVoterEpicVal] = useState('');
+  const [editVoterAgeVal, setEditVoterAgeVal] = useState('');
+  const [editVoterGenderVal, setEditVoterGenderVal] = useState('Male');
+  const [editVoterHouseNoVal, setEditVoterHouseNoVal] = useState('');
+
   // Searching & Filtering
   const [searchQuery, setSearchQuery] = useState('');
   const [voterSearchQuery, setVoterSearchQuery] = useState('');
@@ -290,7 +300,7 @@ export default function App() {
     tabDashboard: { mr: "डॅशबोर्ड", en: "Dashboard" },
     tabDistribution: { mr: "नवीन फॉर्म वाटप", en: "New Distribution" },
     tabCollection: { mr: "जमा / संकलन", en: "Collection & Search" },
-    tabVoters: { mr: "मतदार यादी २०२४", en: "Voter List 2024" },
+    tabVoters: { mr: "मतदार यादी", en: "Voter List" },
     tabReports: { mr: "अहवाल व निर्यात", en: "Reports & Export" },
     
     // Dashboard Stats
@@ -1637,6 +1647,106 @@ export default function App() {
     setNewVoterGender('Male');
     setNewVoterHouseNo('');
     setShowAddVoterModal(false);
+  };
+
+  // Open edit voter modal
+  const handleOpenEditVoterModal = (v: Voter) => {
+    setEditingVoter(v);
+    setEditVoterSrNoVal(v.srNo);
+    setEditVoterNameVal(v.name);
+    setEditVoterEpicVal(v.epic || '');
+    setEditVoterAgeVal(v.age ? String(v.age) : '');
+    setEditVoterGenderVal(v.gender || 'Male');
+    setEditVoterHouseNoVal(v.houseNo || '');
+    setShowEditVoterModal(true);
+  };
+
+  // Handle updating voter details (Sr No, Name, etc.)
+  const handleUpdateVoter = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingVoter) return;
+
+    const cleanSrNo = editVoterSrNoVal.trim();
+    const cleanName = editVoterNameVal.trim();
+
+    if (!cleanSrNo || !cleanName) {
+      showToast(lang === 'mr' ? "अनुक्रमांक आणि नाव आवश्यक आहे." : "Sr No and Name are required.", 'error');
+      return;
+    }
+
+    const oldSrNo = editingVoter.srNo;
+    const oldName = editingVoter.name;
+
+    // Check conflict if Sr No changed
+    if (cleanSrNo !== oldSrNo) {
+      const exists = voters.some(v => v.srNo === cleanSrNo);
+      if (exists) {
+        showToast(
+          lang === 'mr' 
+            ? `अनुक्रमांक ${cleanSrNo} आधीच यादीत वापरलेला आहे!` 
+            : `Sr No ${cleanSrNo} is already in use in voter list!`, 
+          'error'
+        );
+        return;
+      }
+    }
+
+    // Update voters list
+    const updatedVoters = voters.map(v => {
+      if (v.srNo === oldSrNo) {
+        return {
+          ...v,
+          srNo: cleanSrNo,
+          name: cleanName,
+          epic: editVoterEpicVal.trim(),
+          age: editVoterAgeVal ? parseInt(editVoterAgeVal) : null,
+          gender: editVoterGenderVal,
+          houseNo: editVoterHouseNoVal.trim()
+        };
+      }
+      if (v.familyId === oldSrNo && cleanSrNo !== oldSrNo) {
+        return {
+          ...v,
+          familyId: cleanSrNo
+        };
+      }
+      return v;
+    }).sort((a, b) => {
+      const numA = parseInt(a.srNo);
+      const numB = parseInt(b.srNo);
+      if (isNaN(numA) || isNaN(numB)) return a.srNo.localeCompare(b.srNo);
+      return numA - numB;
+    });
+
+    saveVoters(updatedVoters);
+
+    // If Sr No or Name changed, update linked form records
+    if (cleanSrNo !== oldSrNo || cleanName !== oldName) {
+      const updatedForms = forms.map(f => {
+        if (!f.voterSrNo) return f;
+        const srs = f.voterSrNo.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+        if (srs.includes(oldSrNo)) {
+          const newSrs = srs.map(s => s === oldSrNo ? cleanSrNo : s);
+          const newVoterSrNoStr = newSrs.join(', ');
+
+          // Recalculate voterName string for the form
+          const matchedVoters = updatedVoters.filter(v => newSrs.includes(v.srNo));
+          const newVoterNameStr = matchedVoters.map(v => v.name).join(', ') || f.voterName;
+
+          return {
+            ...f,
+            voterSrNo: newVoterSrNoStr,
+            voterName: newVoterNameStr
+          };
+        }
+        return f;
+      });
+      saveForms(updatedForms);
+    }
+
+    showToast(lang === 'mr' ? "मतदाराची माहिती यशस्वीरित्या अद्यतनित केली!" : "Voter details successfully updated!", 'success');
+    setShowEditVoterModal(false);
+    setEditingVoter(null);
   };
 
   // Delete voter
@@ -3526,6 +3636,13 @@ export default function App() {
                                     </button>
                                   )}
                                   <button
+                                    onClick={() => handleOpenEditVoterModal(v)}
+                                    className="text-amber-700 hover:bg-amber-50 border border-amber-200 p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                                    title={lang === 'mr' ? "मतदाराची माहिती बदला / संपादित करा" : "Edit Voter Details"}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
                                     onClick={() => handleDeleteVoter(v.srNo)}
                                     className="text-slate-300 hover:text-rose-600 p-1.5 rounded-lg transition-colors cursor-pointer inline-flex items-center"
                                     title="Delete Voter"
@@ -3660,6 +3777,15 @@ export default function App() {
                                   <span className="hidden sm:inline">{lang === 'mr' ? 'विभक्त करा' : 'Unlink'}</span>
                                 </button>
                               )}
+
+                              <button
+                                onClick={() => handleOpenEditVoterModal(v)}
+                                className="text-amber-700 hover:bg-amber-50 border border-amber-200 p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                                title={lang === 'mr' ? "मतदाराची माहिती बदला / संपादित करा" : "Edit Voter Details"}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span className="hidden md:inline">{lang === 'mr' ? 'संपादन' : 'Edit'}</span>
+                              </button>
 
                               <button
                                 onClick={() => handleDeleteVoter(v.srNo)}
@@ -4265,6 +4391,133 @@ export default function App() {
                   className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer"
                 >
                   {lang === 'mr' ? "मतदार जतन करा" : "Save Voter"}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT VOTER DETAILS */}
+      {showEditVoterModal && editingVoter && (
+        <div id="edit-voter-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden">
+            
+            <div className="bg-gradient-to-r from-amber-600 to-amber-700 text-white p-4 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-5 h-5" />
+                <h3 className="font-extrabold text-base">
+                  {lang === 'mr' ? "मतदाराची माहिती बदला / संपादन" : "Edit Voter Details"}
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowEditVoterModal(false);
+                  setEditingVoter(null);
+                }}
+                className="text-white/80 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateVoter} className="p-5 space-y-4">
+              
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {lang === 'mr' ? "अनुक्रमांक *" : "Sr No *"}
+                  </label>
+                  <input 
+                    type="text" 
+                    value={editVoterSrNoVal}
+                    onChange={(e) => setEditVoterSrNoVal(e.target.value.trim())}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-mono font-bold"
+                    placeholder="9"
+                    required
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {lang === 'mr' ? "मतदाराचे पूर्ण नाव *" : "Voter Full Name *"}
+                  </label>
+                  <input 
+                    type="text" 
+                    value={editVoterNameVal}
+                    onChange={(e) => setEditVoterNameVal(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-semibold"
+                    placeholder={lang === 'mr' ? "उदा. पाटील सुजित रामराव" : "e.g. Patil Sujit Ramrao"}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">{lang === 'mr' ? "वय" : "Age"}</label>
+                  <input 
+                    type="text" 
+                    maxLength={3}
+                    value={editVoterAgeVal}
+                    onChange={(e) => setEditVoterAgeVal(e.target.value.replace(/\D/g, ''))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-semibold"
+                    placeholder="25"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">{lang === 'mr' ? "लिंग" : "Gender"}</label>
+                  <select 
+                    value={editVoterGenderVal}
+                    onChange={(e) => setEditVoterGenderVal(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-semibold"
+                  >
+                    <option value="Male">{lang === 'mr' ? "पुरुष (Male)" : "Male"}</option>
+                    <option value="Female">{lang === 'mr' ? "महिला (Female)" : "Female"}</option>
+                    <option value="Other">{lang === 'mr' ? "इतर (Other)" : "Other"}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">{lang === 'mr' ? "EPIC क्र. (कार्ड क्र.)" : "EPIC Card No."}</label>
+                  <input 
+                    type="text" 
+                    value={editVoterEpicVal}
+                    onChange={(e) => setEditVoterEpicVal(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-mono"
+                    placeholder="XYZ1234567"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">{lang === 'mr' ? "घर क्रमांक" : "House No."}</label>
+                  <input 
+                    type="text" 
+                    value={editVoterHouseNoVal}
+                    onChange={(e) => setEditVoterHouseNoVal(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-semibold"
+                    placeholder="12/A"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditVoterModal(false);
+                    setEditingVoter(null);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer"
+                >
+                  {lang === 'mr' ? "रद्द करा" : "Cancel"}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer transition-all shadow-xs"
+                >
+                  {lang === 'mr' ? "अद्यतनित करा" : "Update Voter"}
                 </button>
               </div>
 
