@@ -27,7 +27,9 @@ import {
   Unlink,
   Eye,
   Database,
-  Pencil
+  Pencil,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -226,6 +228,29 @@ export default function App() {
   // PWA & App Install states
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallInstructions, setShowInstallInstructions] = useState(false);
+
+  // Scroll helper state & functions
+  const [showScrollControls, setShowScrollControls] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 150) {
+        setShowScrollControls(true);
+      } else {
+        setShowScrollControls(false);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const scrollToBottom = () => {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  };
 
   // Notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -3244,6 +3269,26 @@ export default function App() {
                     </option>
                   </select>
                 </div>
+
+                {/* Easy Scroll Buttons */}
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 shrink-0">
+                  <button
+                    onClick={scrollToTop}
+                    className="hover:bg-amber-100 text-slate-700 hover:text-amber-900 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                    title={lang === 'mr' ? "वर स्क्रोल करा" : "Scroll to top"}
+                  >
+                    <ArrowUp className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{lang === 'mr' ? "वर" : "Top"}</span>
+                  </button>
+                  <button
+                    onClick={scrollToBottom}
+                    className="hover:bg-amber-100 text-slate-700 hover:text-amber-900 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                    title={lang === 'mr' ? "खाली स्क्रोल करा" : "Scroll to bottom"}
+                  >
+                    <ArrowDown className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{lang === 'mr' ? "खाली" : "Bottom"}</span>
+                  </button>
+                </div>
               </div>
 
             </div>
@@ -3423,6 +3468,20 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Collection Table Footer with Quick Scroll */}
+              <div className="flex justify-between items-center bg-slate-50 border-t border-slate-200 px-4 py-3">
+                <span className="text-xs font-bold text-slate-500">
+                  {lang === 'mr' ? `एकूण रेकॉर्ड्स: ${filteredForms.length}` : `Total records: ${filteredForms.length}`}
+                </span>
+                <button
+                  onClick={scrollToTop}
+                  className="bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" />
+                  <span>{lang === 'mr' ? "पुन्हा वर जा (Scroll Top)" : "Back to Top"}</span>
+                </button>
+              </div>
             </div>
 
           </div>
@@ -3492,7 +3551,27 @@ export default function App() {
               </div>
 
               {/* Actions */}
-              <div className="flex gap-2 w-full lg:w-auto justify-end">
+              <div className="flex flex-wrap gap-2 w-full lg:w-auto justify-end items-center">
+                {/* Easy Scroll Buttons */}
+                <div className="flex items-center gap-1 bg-slate-100 border border-slate-200 rounded-xl p-1 shrink-0">
+                  <button
+                    onClick={scrollToTop}
+                    className="hover:bg-amber-200/60 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                    title={lang === 'mr' ? "वर स्क्रोल करा" : "Scroll to top"}
+                  >
+                    <ArrowUp className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{lang === 'mr' ? "वर" : "Top"}</span>
+                  </button>
+                  <button
+                    onClick={scrollToBottom}
+                    className="hover:bg-amber-200/60 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                    title={lang === 'mr' ? "खाली स्क्रोल करा" : "Scroll to bottom"}
+                  >
+                    <ArrowDown className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{lang === 'mr' ? "खाली" : "Bottom"}</span>
+                  </button>
+                </div>
+
                 <button
                   onClick={() => setShowAddVoterModal(true)}
                   className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
@@ -3811,6 +3890,20 @@ export default function App() {
               </div>
             )}
 
+            {/* Voter List Bottom Scroll Bar */}
+            <div className="flex justify-between items-center bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+              <span className="text-xs font-bold text-slate-600">
+                {lang === 'mr' ? `एकूण मतदार: ${filteredVoters.length}` : `Total voters: ${filteredVoters.length}`}
+              </span>
+              <button
+                onClick={scrollToTop}
+                className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <ArrowUp className="w-4 h-4" />
+                <span>{lang === 'mr' ? "पुन्हा वर जा (Scroll Top)" : "Back to Top"}</span>
+              </button>
+            </div>
+
           </div>
         )}
 
@@ -3992,6 +4085,40 @@ export default function App() {
               </button>
             </div>
 
+          </div>
+        )}
+
+        {/* FLOATING EASY SCROLL CONTROL WIDGET FOR VOTER LIST & COLLECTION TABS */}
+        {(activeTab === 'voters' || activeTab === 'collection') && (
+          <div 
+            id="easy-scroll-floating-widget"
+            className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5 transition-all duration-300"
+          >
+            {/* Scroll to Top Floating Button */}
+            <button
+              onClick={scrollToTop}
+              className={`bg-slate-900 hover:bg-amber-600 text-white p-3 rounded-2xl shadow-2xl border border-white/20 transition-all cursor-pointer flex items-center gap-2 group active:scale-95 ${
+                showScrollControls ? 'opacity-100 translate-y-0 ring-2 ring-amber-500/50' : 'opacity-85 hover:opacity-100'
+              }`}
+              title={lang === 'mr' ? "वर स्क्रोल करा (Scroll to Top)" : "Scroll to Top"}
+            >
+              <ArrowUp className="w-5 h-5 text-amber-400 group-hover:text-white transition-colors" />
+              <span className="text-xs font-extrabold hidden sm:inline pr-1">
+                {lang === 'mr' ? "वर जा" : "Top"}
+              </span>
+            </button>
+
+            {/* Scroll to Bottom Floating Button */}
+            <button
+              onClick={scrollToBottom}
+              className="bg-slate-900 hover:bg-amber-600 text-white p-3 rounded-2xl shadow-2xl border border-white/20 transition-all cursor-pointer flex items-center gap-2 group active:scale-95"
+              title={lang === 'mr' ? "खाली स्क्रोल करा (Scroll to Bottom)" : "Scroll to Bottom"}
+            >
+              <ArrowDown className="w-5 h-5 text-amber-400 group-hover:text-white transition-colors" />
+              <span className="text-xs font-extrabold hidden sm:inline pr-1">
+                {lang === 'mr' ? "खाली जा" : "Bottom"}
+              </span>
+            </button>
           </div>
         )}
 
